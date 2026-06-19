@@ -4,7 +4,10 @@ Minimal high-performance chart engine. **Canvas 2D only. Zero runtime dependenci
 
 - **LineChart** — batched polyline with per-pixel-column min/max decimation
 - **AreaChart** — filled region below the line with the same decimation path
-- **Multi-series** — one chart, many series, each with its own colour, width, and fill
+- **ScatterChart** — stride-thinned scatter plot, one circle per sampled point
+- **Multi-series** — one chart, many series, each with its own colour, width, fill, dash, and Y-axis
+- **Dual Y-axis** — left and right domains, independent scales per series
+- **Fixed Y range** — lock the grid with `yMin`/`yMax` (ideal for 0–100 % dashboards)
 - Columnar `Float64Array` data per series (no object-per-point overhead)
 - Streaming ring mode with O(1) append and O(1) sliding-window min/max via monotonic deques
 - Dashed, boxed grid with a locked domain that expands but never shrinks — a real visual anchor
@@ -100,6 +103,27 @@ const chart = new AreaChart(canvas, {
 
 ---
 
+### `ScatterChart`
+
+```ts
+new ScatterChart(canvas, opts?: ChartOpts)
+```
+
+Each series is drawn as filled circles, one per sampled point. When the dataset exceeds `maxDots` (default 2000) the renderer switches to **stride thinning** — it draws every `floor(n / maxDots)`-th point so the chart stays responsive at any data volume. Individual series can be dashed via `SeriesConfig.dash`.
+
+```ts
+const chart = new ScatterChart(canvas, {
+  series: [
+    { name: 'Packets', color: '#f07167', pointRadius: 3.5 },
+    { name: 'Errors', color: '#ffb454', dash: [6, 3] },
+  ],
+  maxPoints: 5000,
+  autoDraw: true,
+})
+```
+
+---
+
 ## Data API
 
 Every data method takes a **series index** as the first argument. `setMaxPoints()`, `clear()`, and `draw()` operate on all series.
@@ -112,6 +136,9 @@ Every data method takes a **series index** as the first argument. `setMaxPoints(
 | `setMaxPoints` | `(maxPoints: number)` | Resize the streaming window for all series. |
 | `clear` | `()` | Empty all series and reset the grid domain. |
 | `draw` | `()` | Manual paint. No-op when clean and no crosshair. |
+| `suspendDraw` | `()` | Pause rAF-coalesced drawing. Nestable — pair with `resumeDraw()`. |
+| `resumeDraw` | `()` | Resume after matching `suspendDraw()`. Draws immediately if dirty. |
+| `toImage` | `()` | Export the canvas as a PNG data URL. |
 | `destroy` | `()` | Detach observers, release buffers. |
 
 ### Read-only properties
@@ -183,6 +210,9 @@ setInterval(() => {
 | `yTicks` | `6` | Approximate Y-axis tick count |
 | `maxPoints` | `0` | Activate ring streaming mode (0 = off) |
 | `autoDraw` | `false` | Coalesce data changes into one rAF draw |
+| `yMin` | `0` | Fixed Y-axis lower bound (0 = auto). Pair with `yMax`. |
+| `yMax` | `0` | Fixed Y-axis upper bound (0 = auto). Pair with `yMin`. |
+| `maxDots` | `2000` | Max dots before scatter chart stride-thinning kicks in |
 | `lineColor` | `#4ea8ff` | Fallback line colour |
 | `lineWidth` | `1.5` | Fallback line width |
 | `fillColor` | `#4ea8ff` | Fallback area fill |
@@ -196,8 +226,10 @@ setInterval(() => {
 | `name` | yes | — | Legend and tooltip label |
 | `color` | yes | — | Line, dot, and legend swatch colour |
 | `lineWidth` | no | `ChartOpts.lineWidth` | Stroke width |
+| `dash` | no | — | Dash pattern, e.g. `[8, 4]` for dashed lines |
 | `fillColor` | no | `ChartOpts.fillColor` | Area fill colour |
 | `fillOpacity` | no | `ChartOpts.fillOpacity` | Area fill opacity |
+| `yAxis` | no | `'left'` | Which Y axis this series maps to (`'left'` \| `'right'`) |
 
 ---
 
@@ -235,6 +267,69 @@ Rendered automatically when two or more series are configured. Placed in the top
 
 ---
 
+## Dual Y-axis
+
+When a series declares `yAxis: 'right'` the chart maintains a separate Y domain for it, with tick labels rendered on the right side of the frame. Each series uses its own domain for scale mapping; the crosshair reads the correct axis per series.
+
+```ts
+const chart = new LineChart(canvas, {
+  series: [
+    { name: 'Temp (°C)', color: '#ffb454', yAxis: 'left' },
+    { name: 'Humidity (%)', color: '#4ea8ff', yAxis: 'right' },
+  ],
+  maxPoints: 2000,
+  autoDraw: true,
+})
+```
+
+---
+
+## Presets
+
+Pre-built `DARK` and `LIGHT` colour presets ready to spread over constructor options.
+
+```ts
+import { LineChart, DARK, LIGHT } from 'goro-charts'
+
+// Dark (default) — explicit
+new LineChart(canvas, { ...DARK, series: [...] })
+
+// Light theme
+new LineChart(canvas, { ...LIGHT, series: [...] })
+```
+
+---
+
+## Bulk loading
+
+`suspendDraw()` pauses the rAF-coalesced draw scheduler. Pair it with `resumeDraw()` to batch many append / setData calls without intermediate paints. Nestable — pause N times, resume N times.
+
+```ts
+chart.suspendDraw()
+for (const batch of batches) {
+  chart.appendBatch(0, batch.x, batch.y)
+}
+chart.resumeDraw() // one draw, then normal scheduling resumes
+```
+
+---
+
+## Fixed Y range
+
+Set `yMin` and `yMax` to pin the grid domain to a known range. The grid won't auto-expand — ideal for dashboards where the scale is fixed (e.g. always 0–100 %).
+
+```ts
+new LineChart(canvas, {
+  yMin: 0,
+  yMax: 100,
+  series: [{ name: 'CPU', color: '#4ea8ff' }],
+})
+```
+
+When both are `0` (the default) the grid domain expands automatically from data.
+
+---
+
 ## Architecture
 
 ```
@@ -242,11 +337,13 @@ src/
   index.ts               Public barrel
   types.ts               ChartOpts, SeriesConfig, PlotRect, Domain, SeriesView
   defaults.ts            Baseline options
+  presets.ts             DARK / LIGHT colour presets
 
   charts/
     chart-base.ts        Abstract orchestrator (multi-store, locked grid, dirty/rAF, interaction)
     line-chart.ts        LineChart — delegates to renderLine
     area-chart.ts        AreaChart — delegates to renderArea
+    scatter-chart.ts     ScatterChart — delegates to renderScatter
 
   data/
     monotonic-extent.ts  O(1) sliding min/max via dual monotonic deques
@@ -254,9 +351,10 @@ src/
     series-store.ts      Unified snapshot + ring data store
 
   render/
-    axes.ts              Dashed grid + tick labels (no axis strokes)
+    axes.ts              Dashed grid + tick labels, dual-Y support
     line.ts              Batched line with per-pixel decimation
     area.ts              Batched area fill + stroke (same decimation, separate paths)
+    scatter.ts           Stride-thinned scatter plot
     crosshair.ts         Multi-series interpolated crosshair + tooltip card
     legend.ts            Horizontal compact legend pill
     shape.ts             Canvas path helper (roundedRect)

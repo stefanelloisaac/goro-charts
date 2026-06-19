@@ -5,11 +5,13 @@
  * config entry provides its own colour and optional overrides. `maxPoints: 0`
  * is a sentinel meaning "snapshot mode" (no ring); the constructor activates
  * ring mode only when the user passes a positive value.
+ *
+ * `yMin: 0 / yMax: 0` are sentinels meaning "auto" — the grid domain
+ * expands from data unless the user sets non-zero values.
  */
 
 import type { ResolvedOpts } from './types.ts'
 
-/** Baseline options; user options are spread over these. */
 export const CHART_DEFAULTS: ResolvedOpts = {
   series: [{ name: 'Series 0', color: '#4ea8ff', lineWidth: 1.5 }],
   padding: [16, 16, 32, 56],
@@ -31,4 +33,7 @@ export const CHART_DEFAULTS: ResolvedOpts = {
   yTicks: 6,
   maxPoints: 0,
   autoDraw: false,
+  yMin: 0,
+  yMax: 0,
+  maxDots: 2000,
 }

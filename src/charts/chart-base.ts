@@ -12,6 +12,11 @@
  * all stores so grid ticks span every visible series. Each store is rendered
  * independently by the subclass's {@link renderSeries}, receiving per-series
  * colour/style overrides merged from its config entry.
+ *
+ * Dual-Y: when any series opts into `yAxis: 'right'` the chart maintains
+ * left and right grid domains independently. Left-axis series share the left
+ * domain; right-axis series share the right. Tick labels appear on both sides
+ * and the crosshair reads the correct axis per series.
  */
 
 import { CHART_DEFAULTS } from '../defaults.ts'
@@ -20,7 +25,7 @@ import { Surface } from '../render/surface.ts'
 import { renderGrid, renderAxes } from '../render/axes.ts'
 import { renderCrosshair } from '../render/crosshair.ts'
 import { renderLegend } from '../render/legend.ts'
-import type { ChartOpts, ResolvedOpts, SeriesConfig, SeriesView, PlotRect } from '../types.ts'
+import type { ChartOpts, ResolvedOpts, SeriesConfig, SeriesView, PlotRect, Domain } from '../types.ts'
 
 /** Abstract base for all chart types. */
 export abstract class ChartBase {
@@ -29,8 +34,10 @@ export abstract class ChartBase {
   protected stores: SeriesStore[]
   protected seriesConfigs: SeriesConfig[]
 
-  private gridDomain = { xMin: 0, xMax: 0, yMin: 0, yMax: 0 }
+  private gridDomainLeft: Domain = { xMin: 0, xMax: 0, yMin: 0, yMax: 0 }
+  private gridDomainRight: Domain = { xMin: 0, xMax: 0, yMin: 0, yMax: 0 }
   private gridPinned = false
+  private hasRightAxis = false
 
   private dirty = false
   private cursorX = -1
@@ -39,6 +46,7 @@ export abstract class ChartBase {
 
   private autoDraw: boolean
   private rafScheduled = 0
+  private suspendCount = 0
 
   private resizeObserver: ResizeObserver | null = null
   private readonly handleResize = () => this.onResize()
@@ -55,9 +63,18 @@ export abstract class ChartBase {
       : [{ name: 'Series 0', color: this.opts.lineColor }]
 
     this.stores = this.seriesConfigs.map(() => new SeriesStore())
+    this.hasRightAxis = this.seriesConfigs.some((c) => c.yAxis === 'right')
 
     if (opts?.maxPoints != null && opts.maxPoints > 0) {
       for (const s of this.stores) s.initRing(opts.maxPoints)
+    }
+
+    if (this.opts.yMin !== 0 || this.opts.yMax !== 0) {
+      this.gridDomainLeft.yMin = this.opts.yMin
+      this.gridDomainLeft.yMax = this.opts.yMax
+      this.gridDomainRight.yMin = this.opts.yMin
+      this.gridDomainRight.yMax = this.opts.yMax
+      this.gridPinned = true
     }
 
     this.dirty = true
@@ -128,6 +145,25 @@ export abstract class ChartBase {
     return this.stores[index].lastValue
   }
 
+  /**
+   * Pause rAF-coalesced drawing. Nestable — call {@link resumeDraw} the
+   * same number of times to re-enable. Useful for bulk-loading data without
+   * intermediate paints.
+   */
+  suspendDraw(): void {
+    this.suspendCount++
+  }
+  /** Resume drawing after a matching {@link suspendDraw}. */
+  resumeDraw(): void {
+    if (this.suspendCount > 0) this.suspendCount--
+    if (this.suspendCount === 0 && this.dirty) this.invalidate()
+  }
+
+  /** Export the current canvas as a PNG data URL. */
+  toImage(): string {
+    return this.surface.canvas.toDataURL('image/png')
+  }
+
   // ---- Rendering -----------------------------------------------------------
 
   /** Paint the chart. Cheap to call repeatedly: returns early when clean. */
@@ -146,9 +182,19 @@ export abstract class ChartBase {
     this.surface.blit()
 
     if (this.showCrosshair) {
+      const crosshairViews: SeriesView[] = this.stores.map((store, i) => {
+        const dom = (this.seriesConfigs[i].yAxis ?? 'left') === 'right'
+          ? this.gridDomainRight
+          : this.gridDomainLeft
+        return Object.assign(
+          Object.create(Object.getPrototypeOf(store)),
+          store,
+          { yMin: dom.yMin, yMax: dom.yMax },
+        )
+      })
       renderCrosshair(
         this.surface.ctx,
-        this.stores,
+        crosshairViews,
         this.seriesConfigs,
         plot,
         this.opts,
@@ -187,10 +233,12 @@ export abstract class ChartBase {
 
     this.updateGridDomain()
 
-    renderGrid(ctx, this.gridDomain, plot, this.opts)
-    renderAxes(ctx, this.gridDomain, plot, this.opts)
+    renderGrid(ctx, this.gridDomainLeft, plot, this.opts)
+    renderAxes(ctx, this.gridDomainLeft, plot, this.opts)
+    if (this.hasRightAxis) {
+      renderAxes(ctx, this.gridDomainRight, plot, this.opts, 'right')
+    }
 
-    // Render each series with its own colour/style override.
     for (let i = 0; i < this.stores.length; i++) {
       const store = this.stores[i]
       if (store.count === 0) continue
@@ -202,7 +250,16 @@ export abstract class ChartBase {
         fillColor: cfg.fillColor ?? this.opts.fillColor,
         fillOpacity: cfg.fillOpacity ?? this.opts.fillOpacity,
       }
-      this.renderSeries(ctx, store, plot, sOpts)
+
+      if (cfg.dash) ctx.setLineDash(cfg.dash)
+      const dom = cfg.yAxis === 'right' ? this.gridDomainRight : this.gridDomainLeft
+      const proxyView: SeriesView = Object.assign(
+        Object.create(Object.getPrototypeOf(store)),
+        store,
+        { yMin: dom.yMin, yMax: dom.yMax },
+      )
+      this.renderSeries(ctx, proxyView, plot, sOpts)
+      if (cfg.dash) ctx.setLineDash([])
     }
 
     renderLegend(ctx, this.seriesConfigs, plot, this.opts)
@@ -212,43 +269,70 @@ export abstract class ChartBase {
    * Anchor the grid so it only expands, never shrinks.
    *
    * On the first call after data arrives the grid domain snaps to the union
-   * extent across all series. Afterwards it stays frozen until any series
-   * exceeds it, at which point it expands with a 10 % margin on the breached
-   * side. This keeps the horizontal reference lines stationary so the eye
-   * tracks movement within a stable frame.
+   * extent. Afterwards it stays frozen until a series exceeds it, at which
+   * point it expands with 10 % margin. If the user supplied `yMin` / `yMax`
+   * those are treated as hard bounds that override the auto-expand logic.
    */
   private updateGridDomain(): void {
-    const d = this.gridDomain
     if (this.stores.every((s) => s.count === 0)) return
 
+    const userYMin = this.opts.yMin
+    const userYMax = this.opts.yMax
+    const fixedY = userYMin !== 0 || userYMax !== 0
+
     if (!this.gridPinned) {
-      d.xMin = Infinity
-      d.xMax = -Infinity
-      d.yMin = Infinity
-      d.yMax = -Infinity
-      for (const s of this.stores) {
-        if (s.count === 0) continue
-        if (s.xMin < d.xMin) d.xMin = s.xMin
-        if (s.xMax > d.xMax) d.xMax = s.xMax
-        if (s.yMin < d.yMin) d.yMin = s.yMin
-        if (s.yMax > d.yMax) d.yMax = s.yMax
+      // First draw: compute union per axis from data, respecting any user bounds.
+      this.initDomain(this.gridDomainLeft, 'left')
+      if (this.hasRightAxis) this.initDomain(this.gridDomainRight, 'right')
+      if (fixedY) {
+        if (userYMin !== 0) {
+          this.gridDomainLeft.yMin = userYMin
+          this.gridDomainRight.yMin = userYMin
+        }
+        if (userYMax !== 0) {
+          this.gridDomainLeft.yMax = userYMax
+          this.gridDomainRight.yMax = userYMax
+        }
       }
       this.gridPinned = true
       return
     }
 
-    let changed = false
-    const yr = d.yMax - d.yMin || 1
-    for (const s of this.stores) {
+    // Expand per axis only where data exceeds current bounds.
+    if (fixedY) return // hard-locked — no expansion
+    this.expandDomain(this.gridDomainLeft, 'left')
+    if (this.hasRightAxis) this.expandDomain(this.gridDomainRight, 'right')
+  }
+
+  private initDomain(d: Domain, axis: 'left' | 'right'): void {
+    d.xMin = Infinity; d.xMax = -Infinity; d.yMin = Infinity; d.yMax = -Infinity
+    for (let i = 0; i < this.stores.length; i++) {
+      const s = this.stores[i]
       if (s.count === 0) continue
+      if ((this.seriesConfigs[i].yAxis ?? 'left') !== axis) continue
+      if (s.xMin < d.xMin) d.xMin = s.xMin
+      if (s.xMax > d.xMax) d.xMax = s.xMax
+      if (s.yMin < d.yMin) d.yMin = s.yMin
+      if (s.yMax > d.yMax) d.yMax = s.yMax
+    }
+  }
+
+  private expandDomain(d: Domain, axis: 'left' | 'right'): void {
+    const yr = d.yMax - d.yMin || 1
+    let changed = false
+    for (let i = 0; i < this.stores.length; i++) {
+      const s = this.stores[i]
+      if (s.count === 0) continue
+      if ((this.seriesConfigs[i].yAxis ?? 'left') !== axis) continue
       if (s.yMin < d.yMin) { d.yMin = s.yMin - yr * 0.1; changed = true }
       if (s.yMax > d.yMax) { d.yMax = s.yMax + yr * 0.1; changed = true }
     }
     if (changed) {
-      d.xMin = Infinity
-      d.xMax = -Infinity
-      for (const s of this.stores) {
+      d.xMin = Infinity; d.xMax = -Infinity
+      for (let i = 0; i < this.stores.length; i++) {
+        const s = this.stores[i]
         if (s.count === 0) continue
+        if ((this.seriesConfigs[i].yAxis ?? 'left') !== axis) continue
         if (s.xMin < d.xMin) d.xMin = s.xMin
         if (s.xMax > d.xMax) d.xMax = s.xMax
       }
@@ -269,7 +353,7 @@ export abstract class ChartBase {
   /** Mark dirty and schedule/perform a draw per the autoDraw policy. */
   private invalidate(): void {
     this.dirty = true
-    if (!this.autoDraw) return
+    if (!this.autoDraw || this.suspendCount > 0) return
     if (this.rafScheduled) return
     this.rafScheduled = requestAnimationFrame(() => {
       this.rafScheduled = 0

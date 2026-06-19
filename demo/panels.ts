@@ -1,45 +1,41 @@
 /**
  * @file Panel definitions and DOM/chart construction for the demo.
  *
- * Two live panels in a 2-column grid, each with multiple series:
- *   - CPU Load: {@link LineChart} with CPU (random walk) + Temp (slow sine)
+ * Three live panels in a 3-column grid:
+ *   - CPU + Req/s: {@link LineChart} with CPU (random walk, left) + Req/s (noisy sine, dual Y right)
  *   - Requests/sec: {@link AreaChart} with Req/s (area fill) + Baseline (line)
+ *   - Network: {@link ScatterChart} with Packets (spiky) + Errors (spiky, dashed)
  */
 
-import { LineChart, AreaChart } from '../src/index.ts'
+import { LineChart, AreaChart, ScatterChart } from '../src/index.ts'
 import {
   randomWalkGen,
   slowSineGen,
   noisySineGen,
+  spikyGen,
   type Generator,
 } from './generators.ts'
 import type { SeriesConfig } from '../src/types.ts'
 
-/** Per-series config with attached generator. */
 interface SeriesDef {
   config: SeriesConfig
   gen: () => Generator
 }
 
-/** Static configuration for one panel. */
 export interface PanelDef {
   id: string
   title: string
-  chartType: 'line' | 'area'
+  chartType: 'line' | 'area' | 'scatter'
   series: SeriesDef[]
-  /** Window size multiplier relative to the global window. */
   windowMul: number
-  /** Batch size multiplier relative to the global points/tick. */
   batchMul: number
-  /** Series index used for the KPI card (default 0). */
   kpiSeries?: number
   kpi?: { label: string; unit: string; digits?: number }
 }
 
-/** Live runtime state for one panel. */
 export interface Panel {
   def: PanelDef
-  chart: LineChart | AreaChart
+  chart: LineChart | AreaChart | ScatterChart
   gens: Generator[]
   nextXs: number[]
   bx: Float64Array
@@ -49,13 +45,12 @@ export interface Panel {
   badgeEl: HTMLElement
 }
 
-/** The dashboard's panels, in render order. */
 export const PANELS: PanelDef[] = [
   {
-    id: 'cpu', title: 'CPU Load', chartType: 'line', windowMul: 1, batchMul: 1,
+    id: 'cpu', title: 'CPU + Req/s (dual Y)', chartType: 'line', windowMul: 1, batchMul: 1,
     series: [
-      { config: { name: 'CPU', color: '#4ea8ff' }, gen: () => randomWalkGen() },
-      { config: { name: 'Temp', color: '#ffb454' }, gen: () => slowSineGen() },
+      { config: { name: 'CPU', color: '#4ea8ff', lineWidth: 3 }, gen: () => randomWalkGen() },
+      { config: { name: 'Req/s', color: '#ffb454', lineWidth: 1.2, dash: [8, 4], yAxis: 'right' }, gen: () => noisySineGen() },
     ],
     kpi: { label: 'CPU', unit: '%' },
   },
@@ -66,6 +61,14 @@ export const PANELS: PanelDef[] = [
       { config: { name: 'Baseline', color: '#c792ff', lineWidth: 1 }, gen: () => slowSineGen(3000, 800, 600) },
     ],
     kpi: { label: 'Req/s', unit: '' },
+  },
+  {
+    id: 'net', title: 'Network Activity', chartType: 'scatter', windowMul: 1, batchMul: 1,
+    series: [
+      { config: { name: 'Packets', color: '#f07167' }, gen: () => spikyGen() },
+      { config: { name: 'Errors', color: '#ffb454', dash: [4, 4] }, gen: () => spikyGen() },
+    ],
+    kpi: { label: 'Net', unit: ' MB/s', digits: 1 },
   },
 ]
 
@@ -80,7 +83,6 @@ function buildKpi(host: HTMLElement, def: PanelDef): { value: HTMLElement; range
   }
 }
 
-/** Build one panel's DOM + chart and return its runtime state. */
 export function buildPanel(
   gridHost: HTMLElement,
   kpiHost: HTMLElement,
@@ -110,9 +112,10 @@ export function buildPanel(
     padding: [12, 12, 24, 48] as [number, number, number, number],
   }
 
-  const chart = def.chartType === 'area'
-    ? new AreaChart(canvas, chartOpts)
-    : new LineChart(canvas, chartOpts)
+  let chart: LineChart | AreaChart | ScatterChart
+  if (def.chartType === 'area') chart = new AreaChart(canvas, chartOpts)
+  else if (def.chartType === 'scatter') chart = new ScatterChart(canvas, chartOpts)
+  else chart = new LineChart(canvas, chartOpts)
 
   const kpi = def.kpi ? buildKpi(kpiHost, def) : undefined
 

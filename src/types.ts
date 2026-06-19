@@ -16,10 +16,14 @@ export interface SeriesConfig {
   color: string
   /** Line stroke width (AreaChart: top stroke width). */
   lineWidth?: number
+  /** Line dash pattern, e.g. `[8, 4]` for dashed lines. */
+  dash?: number[]
   /** Area fill colour (only meaningful on an {@link AreaChart}). */
   fillColor?: string
   /** Area fill opacity 0–1 (only meaningful on an {@link AreaChart}). */
   fillOpacity?: number
+  /** Which Y axis this series maps to. Default `'left'`. */
+  yAxis?: 'left' | 'right'
 }
 
 /** Public configuration for a {@link LineChart} or {@link AreaChart}. */
@@ -65,6 +69,21 @@ export interface ChartOpts {
    * appends per frame collapse to one paint. Still demand-driven (no idle loop).
    */
   autoDraw?: boolean
+  /**
+   * Fixed Y-axis lower bound. When set the grid domain is pinned to this
+   * value instead of auto-expanding from data. Pair with {@link yMax}.
+   */
+  yMin?: number
+  /**
+   * Fixed Y-axis upper bound. When set the grid domain is pinned to this
+   * value instead of auto-expanding from data. Pair with {@link yMin}.
+   */
+  yMax?: number
+  /**
+   * Max dots drawn by a {@link ScatterChart} before stride-thinning kicks
+   * in (default 2000).
+   */
+  maxDots?: number
 }
 
 /** Fully-resolved options (every field present). */

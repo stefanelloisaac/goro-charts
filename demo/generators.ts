@@ -44,3 +44,17 @@ export function noisySineGen(base = 8000, amp = 2500, period = 400): Generator {
     },
   }
 }
+
+/** Low baseline with decaying bursts — feels like network packets. */
+export function spikyGen(): Generator {
+  let v = 10
+  return {
+    next() {
+      v += (Math.random() - 0.5) * 2
+      if (v < 2) v = 2
+      if (Math.random() < 0.01) v += Math.random() * 40
+      v *= 0.96
+      return v
+    },
+  }
+}

@@ -60,27 +60,32 @@ export function renderGrid(
   ctx.setLineDash([])
 }
 
-/** Draw axis tick labels (Y on the left, X below). No axis strokes — the grid frame is the boundary. */
+/** Draw axis tick labels (Y on the left or right, X below). No axis strokes — the grid frame is the boundary. */
 export function renderAxes(
   ctx: CanvasRenderingContext2D,
   d: Domain,
   plot: PlotRect,
   opts: ResolvedOpts,
+  side: 'left' | 'right' = 'left',
 ): void {
   ctx.font = `${opts.fontSize}px ${opts.fontFamily}`
   ctx.fillStyle = opts.textColor
 
   const yTicks = generateTicks(d.yMin, d.yMax, opts.yTicks)
-  ctx.textAlign = 'right'
+  ctx.textAlign = side === 'right' ? 'left' : 'right'
   ctx.textBaseline = 'middle'
+  const ypx = side === 'right' ? plot.x + plot.w + 6 : plot.x - 6
   for (const y of yTicks) {
-    ctx.fillText(formatNumber(y), plot.x - 6, yToPx(y, d, plot))
+    ctx.fillText(formatNumber(y), ypx, yToPx(y, d, plot))
   }
 
-  const xTicks = generateTicks(d.xMin, d.xMax, opts.xTicks)
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'top'
-  for (const x of xTicks) {
-    ctx.fillText(formatNumber(x), xToPx(x, d, plot), plot.y + plot.h + 6)
+  // X labels only on the left side (they share the same x domain)
+  if (side === 'left') {
+    const xTicks = generateTicks(d.xMin, d.xMax, opts.xTicks)
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'top'
+    for (const x of xTicks) {
+      ctx.fillText(formatNumber(x), xToPx(x, d, plot), plot.y + plot.h + 6)
+    }
   }
 }
