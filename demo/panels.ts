@@ -1,28 +1,38 @@
 /**
  * @file Panel definitions and DOM/chart construction for the demo.
  *
- * Two live panels in a 2-column grid: a {@link LineChart} and an
- * {@link AreaChart}, both in ring (streaming) mode.
+ * Two live panels in a 2-column grid, each with multiple series:
+ *   - CPU Load: {@link LineChart} with CPU (random walk) + Temp (slow sine)
+ *   - Requests/sec: {@link AreaChart} with Req/s (area fill) + Baseline (line)
  */
 
 import { LineChart, AreaChart } from '../src/index.ts'
 import {
   randomWalkGen,
+  slowSineGen,
   noisySineGen,
   type Generator,
 } from './generators.ts'
+import type { SeriesConfig } from '../src/types.ts'
+
+/** Per-series config with attached generator. */
+interface SeriesDef {
+  config: SeriesConfig
+  gen: () => Generator
+}
 
 /** Static configuration for one panel. */
 export interface PanelDef {
   id: string
   title: string
-  color: string
+  chartType: 'line' | 'area'
+  series: SeriesDef[]
   /** Window size multiplier relative to the global window. */
   windowMul: number
   /** Batch size multiplier relative to the global points/tick. */
   batchMul: number
-  makeGen: () => Generator
-  chartType: 'line' | 'area'
+  /** Series index used for the KPI card (default 0). */
+  kpiSeries?: number
   kpi?: { label: string; unit: string; digits?: number }
 }
 
@@ -30,8 +40,8 @@ export interface PanelDef {
 export interface Panel {
   def: PanelDef
   chart: LineChart | AreaChart
-  gen: Generator
-  nextX: number
+  gens: Generator[]
+  nextXs: number[]
   bx: Float64Array
   by: Float64Array
   valueEl?: HTMLElement
@@ -41,8 +51,22 @@ export interface Panel {
 
 /** The dashboard's panels, in render order. */
 export const PANELS: PanelDef[] = [
-  { id: 'cpu', title: 'CPU Load', color: '#4ea8ff', windowMul: 1, batchMul: 1, makeGen: () => randomWalkGen(), kpi: { label: 'CPU', unit: '%' }, chartType: 'line' },
-  { id: 'req', title: 'Requests / sec', color: '#52d4a0', windowMul: 1, batchMul: 1, makeGen: () => noisySineGen(), kpi: { label: 'Req/s', unit: '' }, chartType: 'area' },
+  {
+    id: 'cpu', title: 'CPU Load', chartType: 'line', windowMul: 1, batchMul: 1,
+    series: [
+      { config: { name: 'CPU', color: '#4ea8ff' }, gen: () => randomWalkGen() },
+      { config: { name: 'Temp', color: '#ffb454' }, gen: () => slowSineGen() },
+    ],
+    kpi: { label: 'CPU', unit: '%' },
+  },
+  {
+    id: 'req', title: 'Requests / sec', chartType: 'area', windowMul: 1, batchMul: 1,
+    series: [
+      { config: { name: 'Req/s', color: '#52d4a0', fillColor: '#52d4a0', fillOpacity: 0.08 }, gen: () => noisySineGen() },
+      { config: { name: 'Baseline', color: '#c792ff', lineWidth: 1 }, gen: () => slowSineGen(3000, 800, 600) },
+    ],
+    kpi: { label: 'Req/s', unit: '' },
+  },
 ]
 
 function buildKpi(host: HTMLElement, def: PanelDef): { value: HTMLElement; range: HTMLElement } {
@@ -67,7 +91,6 @@ export function buildPanel(
   el.className = 'panel'
   el.innerHTML = `
     <div class="head">
-      <span class="dot" style="background:${def.color}"></span>
       <span class="title">${def.title}</span>
       <span class="badge">—</span>
     </div>
@@ -78,13 +101,9 @@ export function buildPanel(
   const cap = Math.max(2, Math.round(windowSize * def.windowMul))
 
   const chartOpts = {
+    series: def.series.map((s) => s.config),
     maxPoints: cap,
     autoDraw: true,
-    lineColor: def.color,
-    pointColor: def.color,
-    lineWidth: 1.4,
-    fillColor: '#52d4a0',
-    fillOpacity: 0.08,
     xTicks: 5,
     yTicks: 4,
     bgColor: '#161618',
@@ -100,8 +119,8 @@ export function buildPanel(
   return {
     def,
     chart,
-    gen: def.makeGen(),
-    nextX: 0,
+    gens: def.series.map((s) => s.gen()),
+    nextXs: def.series.map(() => 0),
     bx: new Float64Array(64),
     by: new Float64Array(64),
     valueEl: kpi?.value,

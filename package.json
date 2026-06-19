@@ -1,7 +1,7 @@
 {
   "name": "goro-charts",
   "version": "0.1.0",
-  "description": "Minimal high-performance line chart engine. Canvas 2D, zero dependencies, framework-agnostic.",
+  "description": "Minimal high-performance line and area chart engine. Canvas 2D, zero dependencies, framework-agnostic.",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -9,8 +9,10 @@
     "canvas",
     "timeseries",
     "line-chart",
+    "area-chart",
     "performance",
-    "uplot",
+    "multi-series",
+    "streaming",
     "visualization",
     "typescript"
   ],

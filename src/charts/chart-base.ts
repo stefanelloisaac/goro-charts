@@ -1,15 +1,17 @@
 /**
  * @file Abstract chart orchestrator shared by every chart type.
  *
- * Owns cross-cutting concerns: the data store, the canvas surface, the dirty
- * flag and rAF coalescing, pointer interaction state, the ResizeObserver, and
- * the draw sequence (static layer → offscreen, blit, crosshair overlay). All
- * data lives in {@link SeriesStore}; all pixels are produced by the `render/`
- * functions. The only thing a subclass decides is how to draw the series
- * line/fill — via {@link renderSeries}.
+ * Owns cross-cutting concerns: the data stores (one per series), the canvas
+ * surface, the dirty flag and rAF coalescing, pointer interaction state, the
+ * ResizeObserver, and the draw sequence (static layer → offscreen, blit,
+ * crosshair overlay). All data lives in {@link SeriesStore} instances; all
+ * pixels are produced by the `render/` functions.
  *
- * Not exported; consumers receive a concrete {@link LineChart} or
- * {@link AreaChart}.
+ * Multi-series: a {@link SeriesStore} is created for each
+ * {@link SeriesConfig} entry. The series extent is computed as a union over
+ * all stores so grid ticks span every visible series. Each store is rendered
+ * independently by the subclass's {@link renderSeries}, receiving per-series
+ * colour/style overrides merged from its config entry.
  */
 
 import { CHART_DEFAULTS } from '../defaults.ts'
@@ -17,13 +19,18 @@ import { SeriesStore } from '../data/series-store.ts'
 import { Surface } from '../render/surface.ts'
 import { renderGrid, renderAxes } from '../render/axes.ts'
 import { renderCrosshair } from '../render/crosshair.ts'
-import type { ChartOpts, ResolvedOpts, SeriesView, PlotRect } from '../types.ts'
+import { renderLegend } from '../render/legend.ts'
+import type { ChartOpts, ResolvedOpts, SeriesConfig, SeriesView, PlotRect } from '../types.ts'
 
 /** Abstract base for all chart types. */
 export abstract class ChartBase {
   protected opts: ResolvedOpts
   protected surface: Surface
-  protected store = new SeriesStore()
+  protected stores: SeriesStore[]
+  protected seriesConfigs: SeriesConfig[]
+
+  private gridDomain = { xMin: 0, xMax: 0, yMin: 0, yMax: 0 }
+  private gridPinned = false
 
   private dirty = false
   private cursorX = -1
@@ -43,8 +50,14 @@ export abstract class ChartBase {
     this.autoDraw = this.opts.autoDraw
     this.surface = new Surface(canvas)
 
+    this.seriesConfigs = this.opts.series.length > 0
+      ? this.opts.series
+      : [{ name: 'Series 0', color: this.opts.lineColor }]
+
+    this.stores = this.seriesConfigs.map(() => new SeriesStore())
+
     if (opts?.maxPoints != null && opts.maxPoints > 0) {
-      this.store.initRing(opts.maxPoints)
+      for (const s of this.stores) s.initRing(opts.maxPoints)
     }
 
     this.dirty = true
@@ -61,51 +74,58 @@ export abstract class ChartBase {
 
   // ---- Public data API -----------------------------------------------------
 
-  /** Snapshot mode: replace the whole series (O(n) extent). */
-  setData(x: Float64Array<ArrayBufferLike>, y: Float64Array<ArrayBufferLike>): void {
-    this.store.setData(x, y)
+  /** Snapshot mode: replace the series at `index` (O(n) extent). */
+  setData(index: number, x: Float64Array<ArrayBufferLike>, y: Float64Array<ArrayBufferLike>): void {
+    this.storeAt(index).setData(x, y)
+    this.gridPinned = false
     this.invalidate()
   }
 
-  /** Ring mode: append one sample. Requires construction with `maxPoints`. */
-  append(x: number, y: number): void {
-    this.store.append(x, y)
+  /** Ring mode: append one sample to series `index`. */
+  append(index: number, x: number, y: number): void {
+    this.storeAt(index).append(x, y)
     this.invalidate()
   }
 
-  /** Ring mode: append a batch of parallel samples. */
-  appendBatch(xs: ArrayLike<number>, ys: ArrayLike<number>): void {
-    this.store.appendBatch(xs, ys)
+  /** Ring mode: append a batch of samples to series `index`. */
+  appendBatch(index: number, xs: ArrayLike<number>, ys: ArrayLike<number>): void {
+    this.storeAt(index).appendBatch(xs, ys)
     this.invalidate()
   }
 
-  /** Resize the streaming window, keeping the most recent samples. */
+  /** Resize the streaming window (applies to all series). */
   setMaxPoints(maxPoints: number): void {
-    this.store.setMaxPoints(maxPoints)
+    for (const s of this.stores) s.setMaxPoints(maxPoints)
     this.invalidate()
   }
 
-  /** Empty the current data (works in both modes). */
+  /** Empty all series. */
   clear(): void {
-    this.store.clear()
+    for (const s of this.stores) s.clear()
+    this.gridPinned = false
     this.invalidate()
   }
 
-  /** Number of points currently in the window. */
-  get pointCount(): number {
-    return this.store.count
+  /** Number of series configured. */
+  get seriesCount(): number {
+    return this.stores.length
   }
-  /** Current window y minimum (O(1)). */
-  get extentMin(): number {
-    return this.store.yMin
+
+  /** Number of points currently in the window for series `index`. */
+  pointCount(index: number): number {
+    return this.stores[index].count
   }
-  /** Current window y maximum (O(1)). */
-  get extentMax(): number {
-    return this.store.yMax
+  /** Current window y minimum for series `index` (O(1)). */
+  extentMin(index: number): number {
+    return this.stores[index].yMin
   }
-  /** Most recent y value, or NaN if empty. */
-  get lastValue(): number {
-    return this.store.lastValue
+  /** Current window y maximum for series `index` (O(1)). */
+  extentMax(index: number): number {
+    return this.stores[index].yMax
+  }
+  /** Most recent y value for series `index`, or NaN if empty. */
+  lastValue(index: number): number {
+    return this.stores[index].lastValue
   }
 
   // ---- Rendering -----------------------------------------------------------
@@ -128,7 +148,8 @@ export abstract class ChartBase {
     if (this.showCrosshair) {
       renderCrosshair(
         this.surface.ctx,
-        this.store,
+        this.stores,
+        this.seriesConfigs,
         plot,
         this.opts,
         { x: this.cursorX, y: this.cursorY },
@@ -154,7 +175,7 @@ export abstract class ChartBase {
 
   // ---- Internals -----------------------------------------------------------
 
-  /** Render the static layer (background, grid, axes, series) to offscreen. */
+  /** Render the static layer (background, grid, axes, series, legend) to offscreen. */
   private renderStatic(plot: PlotRect): void {
     const ctx = this.surface.offscreenCtx()
     const { cssW, cssH } = this.surface
@@ -162,11 +183,76 @@ export abstract class ChartBase {
     ctx.fillStyle = this.opts.bgColor
     ctx.fillRect(0, 0, cssW, cssH)
 
-    if (this.store.count === 0) return
+    if (this.stores.every((s) => s.count === 0)) return
 
-    renderGrid(ctx, this.store, plot, this.opts)
-    renderAxes(ctx, this.store, plot, this.opts)
-    this.renderSeries(ctx, this.store, plot, this.opts)
+    this.updateGridDomain()
+
+    renderGrid(ctx, this.gridDomain, plot, this.opts)
+    renderAxes(ctx, this.gridDomain, plot, this.opts)
+
+    // Render each series with its own colour/style override.
+    for (let i = 0; i < this.stores.length; i++) {
+      const store = this.stores[i]
+      if (store.count === 0) continue
+      const cfg = this.seriesConfigs[i]
+      const sOpts: ResolvedOpts = {
+        ...this.opts,
+        lineColor: cfg.color,
+        lineWidth: cfg.lineWidth ?? this.opts.lineWidth,
+        fillColor: cfg.fillColor ?? this.opts.fillColor,
+        fillOpacity: cfg.fillOpacity ?? this.opts.fillOpacity,
+      }
+      this.renderSeries(ctx, store, plot, sOpts)
+    }
+
+    renderLegend(ctx, this.seriesConfigs, plot, this.opts)
+  }
+
+  /**
+   * Anchor the grid so it only expands, never shrinks.
+   *
+   * On the first call after data arrives the grid domain snaps to the union
+   * extent across all series. Afterwards it stays frozen until any series
+   * exceeds it, at which point it expands with a 10 % margin on the breached
+   * side. This keeps the horizontal reference lines stationary so the eye
+   * tracks movement within a stable frame.
+   */
+  private updateGridDomain(): void {
+    const d = this.gridDomain
+    if (this.stores.every((s) => s.count === 0)) return
+
+    if (!this.gridPinned) {
+      d.xMin = Infinity
+      d.xMax = -Infinity
+      d.yMin = Infinity
+      d.yMax = -Infinity
+      for (const s of this.stores) {
+        if (s.count === 0) continue
+        if (s.xMin < d.xMin) d.xMin = s.xMin
+        if (s.xMax > d.xMax) d.xMax = s.xMax
+        if (s.yMin < d.yMin) d.yMin = s.yMin
+        if (s.yMax > d.yMax) d.yMax = s.yMax
+      }
+      this.gridPinned = true
+      return
+    }
+
+    let changed = false
+    const yr = d.yMax - d.yMin || 1
+    for (const s of this.stores) {
+      if (s.count === 0) continue
+      if (s.yMin < d.yMin) { d.yMin = s.yMin - yr * 0.1; changed = true }
+      if (s.yMax > d.yMax) { d.yMax = s.yMax + yr * 0.1; changed = true }
+    }
+    if (changed) {
+      d.xMin = Infinity
+      d.xMax = -Infinity
+      for (const s of this.stores) {
+        if (s.count === 0) continue
+        if (s.xMin < d.xMin) d.xMin = s.xMin
+        if (s.xMax > d.xMax) d.xMax = s.xMax
+      }
+    }
   }
 
   /** Compute the plot rectangle from canvas size minus padding. */
@@ -189,6 +275,12 @@ export abstract class ChartBase {
       this.rafScheduled = 0
       this.draw()
     })
+  }
+
+  private storeAt(index: number): SeriesStore {
+    const s = this.stores[index]
+    if (!s) throw new Error(`series index ${index} out of range (${this.stores.length} series)`)
+    return s
   }
 
   private attachEvents(): void {

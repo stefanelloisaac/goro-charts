@@ -2,22 +2,45 @@
  * @file Shared types and the data/render contract.
  *
  * `ChartOpts` is the public configuration surface shared by all chart types.
- * `PlotRect` and `Domain` are small value objects passed to the pure
- * renderers. `SeriesView` is the read-only contract the renderers depend on
- * instead of the concrete data store — it decouples `render/` from `data/` so
- * either can change independently.
+ * `SeriesConfig` drives per-series styling. `PlotRect` and `Domain` are small
+ * value objects passed to the pure renderers. `SeriesView` is the read-only
+ * contract the renderers depend on instead of the concrete data store — it
+ * decouples `render/` from `data/` so either can change independently.
  */
+
+/** Per-series visual configuration. */
+export interface SeriesConfig {
+  /** Display name for legends and the crosshair tooltip. */
+  name: string
+  /** Line / dot colour for this series. */
+  color: string
+  /** Line stroke width (AreaChart: top stroke width). */
+  lineWidth?: number
+  /** Area fill colour (only meaningful on an {@link AreaChart}). */
+  fillColor?: string
+  /** Area fill opacity 0–1 (only meaningful on an {@link AreaChart}). */
+  fillOpacity?: number
+}
 
 /** Public configuration for a {@link LineChart} or {@link AreaChart}. */
 export interface ChartOpts {
+  /**
+   * One entry per series. Each entry owns colour, width, and optional
+   * name / fill properties. When omitted a single default series is used.
+   */
+  series?: SeriesConfig[]
   /** Padding [top, right, bottom, left] in CSS pixels. */
   padding?: [number, number, number, number]
+  /** Per-series fallback line colour (overridden by SeriesConfig.color). */
   lineColor?: string
+  /** Per-series fallback line width (overridden by SeriesConfig.lineWidth). */
   lineWidth?: number
-  /** Area fill colour (only meaningful for AreaChart). */
+  /** Per-series fallback area fill colour (overridden by SeriesConfig.fillColor). */
   fillColor?: string
-  /** Area fill opacity 0–1 (only meaningful for AreaChart). */
+  /** Per-series fallback area fill opacity (overridden by SeriesConfig.fillOpacity). */
   fillOpacity?: number
+  /** Per-series fallback crosshair marker colour. */
+  pointColor?: string
   gridColor?: string
   axisColor?: string
   textColor?: string
@@ -26,7 +49,6 @@ export interface ChartOpts {
   crosshairColor?: string
   crosshairWidth?: number
   pointRadius?: number
-  pointColor?: string
   bgColor?: string
   /** Approximate number of X-axis ticks. */
   xTicks?: number

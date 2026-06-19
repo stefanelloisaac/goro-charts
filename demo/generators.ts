@@ -19,6 +19,19 @@ export function randomWalkGen(start = 50): Generator {
   }
 }
 
+/** Slow sine with light noise — feels like temperature. */
+export function slowSineGen(base = 50, amp = 8, period = 600): Generator {
+  let i = 0
+  const k = (2 * Math.PI) / period
+  return {
+    next() {
+      const v = base + Math.sin(i * k) * amp + (Math.random() - 0.5) * 1.5
+      i++
+      return v
+    },
+  }
+}
+
 /** Sine over a busy baseline with noise — feels like requests/sec. */
 export function noisySineGen(base = 8000, amp = 2500, period = 400): Generator {
   let i = 0

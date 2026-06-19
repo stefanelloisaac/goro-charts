@@ -8,4 +8,4 @@
 
 export { LineChart } from './charts/line-chart.ts'
 export { AreaChart } from './charts/area-chart.ts'
-export type { ChartOpts } from './types.ts'
+export type { ChartOpts, SeriesConfig } from './types.ts'

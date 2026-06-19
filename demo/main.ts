@@ -2,7 +2,7 @@
  * @file Streaming dashboard entry point.
  *
  * Wires the panels, metrics strip, and control bar together and runs the tick
- * loop. Each tick generates a batch per panel and appends it to the engine
+ * loop. Each tick generates batches per-series and appends to the engine
  * (ring mode); the chart's autoDraw coalesces the burst into one rAF paint.
  * Append cost is measured per tick and surfaced in the metrics strip, so the
  * controls double as a live performance probe.
@@ -41,38 +41,43 @@ let pointsThisSecond = 0
 
 const panels: Panel[] = PANELS.map((def) => buildPanel(gridEl, kpisEl, def, windowSize))
 
-// ---- Tick: generate batch, append, measure -------------------------------
+// ---- Tick: generate batch per series, append, measure --------------------
 
 function tick(): void {
   let appendMs = 0
 
   for (const p of panels) {
     const reps = Math.max(1, Math.round(batchSize * p.def.batchMul))
-
     if (reps > p.bx.length) {
       p.bx = new Float64Array(reps)
       p.by = new Float64Array(reps)
     }
     const bx = p.bx, by = p.by
-    for (let i = 0; i < reps; i++) {
-      bx[i] = p.nextX++
-      by[i] = p.gen.next()
-    }
-
-    totalPoints += reps
-    pointsThisSecond += reps
 
     const t0 = performance.now()
-    p.chart.appendBatch(bx.subarray(0, reps), by.subarray(0, reps))
-    appendMs += performance.now() - t0
 
-    if (p.def.kpi && p.valueEl && p.rangeEl) {
-      const u = p.def.kpi.unit, d = p.def.kpi.digits ?? 0
-      p.valueEl.textContent = `${fmt(p.chart.lastValue, d)}${u}`
-      p.rangeEl.textContent = `min ${fmt(p.chart.extentMin, d)}${u} · max ${fmt(p.chart.extentMax, d)}${u}`
+    for (let si = 0; si < p.gens.length; si++) {
+      const gen = p.gens[si]
+      for (let i = 0; i < reps; i++) {
+        bx[i] = p.nextXs[si]
+        by[i] = gen.next()
+        p.nextXs[si]++
+      }
+      p.chart.appendBatch(si, bx.subarray(0, reps), by.subarray(0, reps))
+      totalPoints += reps
+      pointsThisSecond += reps
     }
 
-    p.badgeEl.textContent = `${fmt(p.chart.pointCount)} pts`
+    appendMs += performance.now() - t0
+
+    const kpiSeries = p.def.kpiSeries ?? 0
+    if (p.def.kpi && p.valueEl && p.rangeEl) {
+      const u = p.def.kpi.unit, d = p.def.kpi.digits ?? 0
+      p.valueEl.textContent = `${fmt(p.chart.lastValue(kpiSeries), d)}${u}`
+      p.rangeEl.textContent = `min ${fmt(p.chart.extentMin(kpiSeries), d)}${u} · max ${fmt(p.chart.extentMax(kpiSeries), d)}${u}`
+    }
+
+    p.badgeEl.textContent = `${fmt(p.chart.pointCount(0))} pts`
   }
 
   tickCount++
@@ -120,7 +125,7 @@ setInterval(() => {
   metricEls.pps.textContent = fmt(pointsThisSecond)
   pointsThisSecond = 0
   footerEl.textContent =
-    `${panels.length} live charts · engine ring mode · window ${fmt(windowSize)} pts · mode: ${mode}`
+    `${panels.length} charts · multi-series · window ${fmt(windowSize)} pts · mode: ${mode}`
 }, 1000)
 
 // ---- Control wiring ------------------------------------------------------
@@ -154,8 +159,8 @@ toggleEl.addEventListener('click', () => {
 resetEl.addEventListener('click', () => {
   for (const p of panels) {
     p.chart.clear()
-    p.gen = p.def.makeGen()
-    p.nextX = 0
+    p.gens = p.def.series.map((s) => s.gen())
+    p.nextXs = p.def.series.map(() => 0)
   }
   tickCount = 0
   totalPoints = 0
