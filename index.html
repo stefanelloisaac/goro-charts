@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Goro Charts · Streaming Dashboard</title>
+    <style>
+      :root {
+        --bg: #0e0e10;
+        --card: #161618;
+        --card-hi: #1b1b1e;
+        --border: #2a2a2e;
+        --text: #e8e8ea;
+        --muted: #8a8a90;
+        --faint: #5a5a60;
+        --accent: #4ea8ff;
+      }
+
+      * { box-sizing: border-box; }
+
+      html, body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .wrap { max-width: 1400px; margin: 0 auto; padding: 24px; }
+
+      header {
+        display: flex;
+        align-items: baseline;
+        gap: 16px;
+        margin-bottom: 18px;
+      }
+      header h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+      header .sub { color: var(--muted); font-size: 13px; }
+
+      /* Controls bar */
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 14px 20px;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 14px 18px;
+        margin-bottom: 16px;
+      }
+      .ctrl { display: flex; flex-direction: column; gap: 4px; }
+      .ctrl label {
+        font-size: 11px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .ctrl .row { display: flex; align-items: center; gap: 8px; }
+      .ctrl input[type="range"] { width: 130px; accent-color: var(--accent); }
+      .ctrl .num {
+        font-size: 13px;
+        font-variant-numeric: tabular-nums;
+        min-width: 56px;
+        color: var(--text);
+      }
+      .ctrl select {
+        font: inherit;
+        font-size: 13px;
+        color: var(--text);
+        background: var(--card-hi);
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        padding: 5px 8px;
+      }
+      .spacer { flex: 1; }
+      .btns { display: flex; gap: 8px; }
+      button {
+        font: inherit;
+        font-size: 13px;
+        color: var(--text);
+        background: var(--card-hi);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 8px 16px;
+        cursor: pointer;
+        transition: background 0.12s ease, border-color 0.12s ease;
+      }
+      button:hover { background: #232327; border-color: #3a3a40; }
+      button:active { transform: translateY(1px); }
+      button.primary { background: var(--accent); border-color: var(--accent); color: #06121f; font-weight: 600; }
+      button.primary:hover { background: #6cb8ff; }
+
+      /* Metrics strip */
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+      .metric {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 12px 16px;
+      }
+      .metric .label {
+        font-size: 11px; color: var(--muted);
+        text-transform: uppercase; letter-spacing: 0.06em;
+      }
+      .metric .value {
+        font-size: 22px; font-weight: 600; letter-spacing: -0.02em;
+        margin-top: 4px; font-variant-numeric: tabular-nums;
+      }
+      .metric .value small { font-size: 12px; color: var(--faint); font-weight: 400; }
+
+      /* KPI row */
+      .kpis {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+      .kpi {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 14px 16px;
+      }
+      .kpi .label {
+        font-size: 12px; color: var(--muted);
+        text-transform: uppercase; letter-spacing: 0.06em;
+      }
+      .kpi .value {
+        font-size: 26px; font-weight: 600; letter-spacing: -0.02em;
+        margin: 6px 0 4px; font-variant-numeric: tabular-nums;
+      }
+      .kpi .range { font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
+
+      /* Panel grid */
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+      .panel {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 14px 16px 8px;
+        display: flex;
+        flex-direction: column;
+      }
+      .panel .head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+      .panel .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+      .panel .title { font-size: 13px; font-weight: 500; }
+      .panel .badge {
+        margin-left: auto;
+        font-size: 11px; color: var(--muted);
+        background: var(--card-hi); border: 1px solid var(--border);
+        border-radius: 6px; padding: 2px 7px;
+        font-variant-numeric: tabular-nums;
+      }
+      .panel canvas { display: block; width: 100%; height: 220px; }
+
+      footer { color: var(--faint); font-size: 12px; text-align: center; padding: 8px 0 4px; }
+
+      @media (max-width: 860px) {
+        .metrics { grid-template-columns: repeat(2, 1fr); }
+        .kpis { grid-template-columns: repeat(2, 1fr); }
+        .grid { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>Goro Charts</h1>
+        <span class="sub">streaming dashboard · live data + performance probe</span>
+      </header>
+
+      <section class="controls">
+        <div class="ctrl">
+          <label>Interval</label>
+          <div class="row">
+            <input type="range" id="interval" min="0" max="2000" step="50" value="1000" />
+            <span class="num" id="intervalVal">1000 ms</span>
+          </div>
+        </div>
+        <div class="ctrl">
+          <label>Points / tick</label>
+          <div class="row">
+            <input type="range" id="batch" min="1" max="500" step="1" value="1" />
+            <span class="num" id="batchVal">1</span>
+          </div>
+        </div>
+        <div class="ctrl">
+          <label>Window (points)</label>
+          <div class="row">
+            <input type="range" id="window" min="200" max="10000" step="100" value="2000" />
+            <span class="num" id="windowVal">2000</span>
+          </div>
+        </div>
+        <div class="ctrl">
+          <label>Mode</label>
+          <select id="mode">
+            <option value="interval">setInterval</option>
+            <option value="raf">requestAnimationFrame (max)</option>
+          </select>
+        </div>
+        <div class="spacer"></div>
+        <div class="btns">
+          <button class="primary" id="toggle">Pause</button>
+          <button id="reset">Reset</button>
+        </div>
+      </section>
+
+      <section class="metrics" id="metrics"></section>
+
+      <section class="kpis" id="kpis"></section>
+
+      <section class="grid" id="grid"></section>
+
+      <footer id="footer"></footer>
+    </div>
+
+    <script type="module" src="/demo/main.ts"></script>
+  </body>
+</html>

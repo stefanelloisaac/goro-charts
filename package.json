@@ -1,0 +1,48 @@
+{
+  "name": "goro-charts",
+  "version": "0.1.0",
+  "description": "Minimal high-performance line chart engine. Canvas 2D, zero dependencies, framework-agnostic.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "chart",
+    "canvas",
+    "timeseries",
+    "line-chart",
+    "performance",
+    "uplot",
+    "visualization",
+    "typescript"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/goro-charts.js"
+    }
+  },
+  "module": "./dist/goro-charts.js",
+  "main": "./dist/goro-charts.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && tsc -p tsconfig.build.json && node -e \"const{readdirSync,readFileSync,writeFileSync}=require('fs');const{join}=require('path');readdirSync('dist',{recursive:true}).filter(f=>f.endsWith('.d.ts')).forEach(f=>{const p=join('dist',f);writeFileSync(p,readFileSync(p,'utf8').replace(/from\\s+'([^']+)\\.ts'/g,'from \\'$1\\''))})\"",
+    "typecheck": "tsc -b",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.12.3",
+    "eslint": "^10.3.0",
+    "globals": "^17.6.0",
+    "typescript": "~6.0.2",
+    "typescript-eslint": "^8.59.2",
+    "vite": "^8.0.12"
+  }
+}
