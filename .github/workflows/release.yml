@@ -1,17 +1,18 @@
 name: Release
 
-# Publishes to npm when a v* tag is pushed (e.g. v1.0.0).
-# Setup required before this works (one-time):
+# Publishes to npm — triggered MANUALLY (never runs on its own).
+#
+# How to publish, once you're ready:
 #   1. Create an npm automation token: npmjs.com > Access Tokens > Generate (Automation).
 #   2. Add it as a GitHub repo secret named NPM_TOKEN
 #      (Settings > Secrets and variables > Actions > New repository secret).
+#   3. Go to the repo's Actions tab > Release > "Run workflow".
+#
 # Provenance (--provenance) attaches a signed build attestation via GitHub OIDC,
 # so the npm page shows a verified "Published from GitHub Actions" badge.
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: read
