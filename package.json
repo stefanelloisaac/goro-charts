@@ -4,6 +4,15 @@
   "description": "Minimal high-performance line and area chart engine. Canvas 2D, zero dependencies, framework-agnostic.",
   "type": "module",
   "license": "MIT",
+  "author": "Isaac Stefanello",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stefanelloisaac/goro-charts.git"
+  },
+  "homepage": "https://github.com/stefanelloisaac/goro-charts#readme",
+  "bugs": {
+    "url": "https://github.com/stefanelloisaac/goro-charts/issues"
+  },
   "engines": {
     "node": ">=18"
   },
