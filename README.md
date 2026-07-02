@@ -5,6 +5,8 @@
 [![bundle size](https://img.shields.io/bundlephobia/minzip/goro-charts)](https://bundlephobia.com/package/goro-charts)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
+**[Live demo →](https://stefanelloisaac.github.io/goro-charts/)**
+
 Minimal high-performance chart engine. **Canvas 2D only. Zero runtime dependencies. Framework-agnostic.** Inspired by [uPlot](https://github.com/leeoniya/uPlot) — small, fast, and covers only what you need.
 
 - **LineChart** — batched polyline with per-pixel-column min/max decimation
