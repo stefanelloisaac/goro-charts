@@ -15,8 +15,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Node 20+ (see package.json engines). CI runs on 20 and 22.
-        node-version: [20, 22]
+        # Node 24+ (see package.json engines).
+        node-version: [24]
 
     steps:
       - name: Checkout
