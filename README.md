@@ -61,10 +61,20 @@ interface SeriesConfig {
   color: string;
   /** Line stroke width (AreaChart: top stroke width). Falls back to ChartOpts.lineWidth. */
   lineWidth?: number;
+  /** Line dash pattern, e.g. [8, 4] for dashed lines. */
+  dash?: number[];
   /** Area fill colour (meaningful only on AreaChart). */
   fillColor?: string;
   /** Area fill opacity 0–1 (meaningful only on AreaChart). */
   fillOpacity?: number;
+  /** Which Y axis this series maps to. Default 'left'. */
+  yAxis?: 'left' | 'right';
+  /** Stack group id — series sharing one id render cumulatively (AreaChart). */
+  stack?: string;
+  /** Fixed Y lower bound for this series only (overrides the grid domain). */
+  yMin?: number;
+  /** Fixed Y upper bound for this series only (overrides the grid domain). */
+  yMax?: number;
 }
 ```
 
@@ -284,6 +294,35 @@ const chart = new LineChart(canvas, {
 
 ---
 
+## Stacked area
+
+Series that share the same `stack` id render cumulatively: each layer's Y
+values are added on top of the previous layer's accumulated Y within the
+group, so the bands sit flush against each other. Meaningful only on an
+`AreaChart`. The crosshair dots follow the accumulated band edges.
+
+```ts
+const chart = new AreaChart(canvas, {
+  series: [
+    { name: 'System', color: '#4ea8ff', stack: 'cpu' },
+    { name: 'User', color: '#52d4a0', stack: 'cpu' },
+    { name: 'IO Wait', color: '#ffb454', stack: 'cpu' },
+  ],
+  maxPoints: 2000,
+  autoDraw: true,
+});
+```
+
+A `stack` group with fewer than two populated series falls back to a normal
+(non-stacked) area render.
+
+Like `LineChart` / `AreaChart`, stacked bands auto-switch to per-pixel-column
+min/max decimation once a layer is denser than 2× the plot width, so large
+windows (tens of thousands of points per series) stay cheap — the draw cost is
+flat regardless of window size.
+
+---
+
 ## Presets
 
 Pre-built `DARK` and `LIGHT` colour presets ready to spread over constructor options.
@@ -327,6 +366,117 @@ new LineChart(canvas, {
 ```
 
 When both are `0` (the default) the grid domain expands automatically from data.
+
+---
+
+## Chart sync
+
+Bidirectionally sync the crosshair between two or more charts. When the mouse
+moves on one chart, the crosshair guide, marker dots, and tooltip card appear on
+all synced charts at the matching x coordinate — ideal for multi-panel dashboards
+where you want to compare the same time window across views.
+
+```ts
+chart1.sync(chart2);
+chart1.sync(chart3);
+```
+
+Calling `sync()` pairs charts in both directions — there is no master/slave
+relationship. The crosshair position on one chart is mirrored on every synced
+target.
+
+---
+
+## Custom tooltips (DOM)
+
+The `onHover` callback fires on every `mousemove` with the interpolated data
+for every visible series at the cursor position. Use it to build DOM-based
+tooltips, update framework state, or pipe values into external widgets.
+
+```ts
+chart.onHover = (hits) => {
+  myTooltipEl.innerHTML = hits
+    .map((h) => `${h.label}: ${h.yVal.toFixed(1)}`)
+    .join('<br>');
+};
+```
+
+Each hit contains the series name, colour, interpolated (x, y) value, and the
+pixel position. See the `SeriesHit` type for the full shape.
+
+---
+
+## Export (PNG)
+
+Call `toImage()` to export the current canvas as a PNG data URL. Useful for
+reports, screenshots, or image-generation pipelines.
+
+```ts
+const url = chart.toImage();
+// e.g. <img src="..."> or download link
+```
+
+---
+
+## Accessibility
+
+Goro Charts renders to Canvas 2D, which is not natively accessible to screen
+readers. The library compensates with several built-in features:
+
+- **`role="img"`** + dynamic **`aria-label`** on the canvas element, updated
+  each draw with a summary of visible series values.
+- **Keyboard navigation** — when the canvas is focused (Tab key), use:
+  - ← / → to move the crosshair 1 data point
+  - Shift + ← / → to move 10 data points
+  - Escape to hide the crosshair
+- **`aria-live` region** — crosshair values are announced to screen readers
+  via a hidden `aria-live="polite"` element inserted next to the canvas.
+- **`prefers-reduced-motion`** — when the user's system preference is set,
+  the chart disables `requestAnimationFrame` coalescing and draws synchronously.
+- **`prefers-contrast: more`** — grid and text colours are boosted for
+  readability when the user requests higher contrast.
+- **`forced-colors: active`** — the chart uses CSS system colours (`Canvas`,
+  `CanvasText`, `GrayText`) when Windows High Contrast Mode is active.
+
+The canvas element receives `tabindex="0"` so it can receive keyboard focus.
+For optimal accessibility, pair the chart with a data table fallback rendered
+outside the canvas.
+
+---
+
+## Troubleshooting
+
+### Canvas is blank / black
+- Ensure the canvas element has non-zero CSS width and height.
+- Check that `chart.draw()` is being called after `setData()` (or enable
+  `autoDraw` for streaming mode).
+- If using `ResizeObserver` in a container with `display: none`, the canvas
+  may have zero dimensions. Call `chart.draw()` after the container becomes
+  visible.
+
+### "Canvas 2D context not available"
+- This error means `canvas.getContext('2d')` returned `null`. Common causes:
+  - The canvas element does not exist in the DOM at construction time.
+  - The canvas was already claimed by a WebGL context.
+  - You are running in a server-side environment (Node.js without `node-canvas`).
+
+### "append() requires the chart to be created with { maxPoints }"
+- Streaming methods (`append`, `appendBatch`) require ring mode, which is
+  activated by passing `maxPoints` (a positive number) to the constructor.
+- Use `setData()` for snapshot mode (full replacement).
+
+### Crosshair does not appear
+- The crosshair only shows when the mouse is inside the plot area (the inner
+  rectangle after padding is applied).
+- Check that `onHover` or mouse events are not being consumed by an overlay
+  element above the canvas.
+
+### Performance is slow with many points
+- Verify that decimation is working: the line/area renderers auto-switch to
+  per-pixel-column decimation when `count > 2 × plotWidth`.
+- For scatter charts, reduce `maxDots` (default 2000) or set it to a lower
+  value to increase stride thinning.
+- Use `suspendDraw()` / `resumeDraw()` when batch-loading large datasets.
 
 ---
 

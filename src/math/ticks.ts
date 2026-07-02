@@ -30,7 +30,11 @@ function niceSpacing(range: number, maxTicks: number): number {
 
 /**
  * Generate the list of tick values spanning [min, max] at a nice spacing.
- * @param maxTicks approximate desired number of ticks (actual count varies)
+ * Spacing is snapped to 1, 2, or 5 × 10ⁿ so labels read cleanly.
+ * @param min - Lower bound of the data range
+ * @param max - Upper bound of the data range
+ * @param maxTicks - Approximate desired number of ticks (actual count varies)
+ * @returns Array of tick values sorted ascending
  */
 export function generateTicks(min: number, max: number, maxTicks: number): number[] {
   const spacing = niceSpacing(niceRange(min, max), maxTicks);

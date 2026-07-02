@@ -163,6 +163,10 @@ export function renderCrosshair(
   if (tx + cardW > cssW) tx = Math.max(2, guidePx - cardW - 14);
   let ty = cursor.y - cardH - 10;
   if (ty < 2) ty = cursor.y + 10;
+  // Avoid overflowing the plot area vertically
+  if (ty + cardH > plot.y + plot.h) {
+    ty = Math.max(2, cursor.y - cardH - 10);
+  }
 
   ctx.fillStyle = 'rgba(10,12,14,0.70)';
   ctx.beginPath();

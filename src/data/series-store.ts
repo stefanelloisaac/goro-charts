@@ -32,7 +32,10 @@ export class SeriesStore implements SeriesView {
     return this.ring !== null;
   }
 
-  /** Create the ring up front (used when constructed with maxPoints). */
+  /**
+   * Create the ring up front (used when constructed with maxPoints).
+   * @throws {Error} if maxPoints < 1
+   */
   initRing(maxPoints: number): void {
     if (maxPoints < 1) throw new Error('maxPoints must be >= 1');
     this.ring = new RingBuffer(maxPoints);
@@ -42,6 +45,8 @@ export class SeriesStore implements SeriesView {
   /**
    * Snapshot mode: replace the whole series. Extents computed once in O(n).
    * Disables any active ring mode.
+   * @throws {Error} if x and y have different lengths
+   * @throws {Error} if x is empty
    */
   setData(x: Float64Array<ArrayBufferLike>, y: Float64Array<ArrayBufferLike>): void {
     if (x.length !== y.length) throw new Error('x and y must have same length');
@@ -67,14 +72,24 @@ export class SeriesStore implements SeriesView {
     this.applyExtent(yMin, yMax);
   }
 
-  /** Ring mode: append one sample (x must be monotonically increasing). */
+  /**
+   * Ring mode: append one sample (x must be monotonically increasing).
+   * @throws {Error} if ring mode is not active (maxPoints not set)
+   */
   append(x: number, y: number): void {
     const r = this.requireRing('append');
+    if (r.count > 0 && x < r.xLast) {
+      console.warn(`[goro-charts] append x=${x} is < last x=${r.xLast}; x values must be monotonically increasing`);
+    }
     r.push(x, y);
     this.syncFromRing();
   }
 
-  /** Ring mode: append a batch of parallel samples. O(k). */
+  /**
+   * Ring mode: append a batch of parallel samples. O(k).
+   * @throws {Error} if ring mode is not active
+   * @throws {Error} if xs and ys have different lengths
+   */
   appendBatch(xs: ArrayLike<number>, ys: ArrayLike<number>): void {
     const r = this.requireRing('appendBatch');
     if (xs.length !== ys.length) throw new Error('xs and ys must have same length');

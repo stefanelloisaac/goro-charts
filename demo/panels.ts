@@ -64,11 +64,11 @@ export const PANELS: PanelDef[] = [
     series: [
       {
         config: { name: 'User', color: '#4ea8ff', fillColor: '#4ea8ff', fillOpacity: 0.12, stack: 'reqs' },
-        gen: () => noisySineGen(4000, 1200, 400),
+        gen: () => noisySineGen(4000, 1200, 400, 300),
       },
       {
         config: { name: 'Sys', color: '#52d4a0', fillColor: '#52d4a0', fillOpacity: 0.12, stack: 'reqs' },
-        gen: () => noisySineGen(2000, 600, 350),
+        gen: () => noisySineGen(2000, 600, 350, 250),
       },
     ],
     kpi: { label: 'Req/s', unit: '' },

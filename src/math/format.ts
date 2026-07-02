@@ -6,7 +6,14 @@
  * band keeps a fixed two decimals (or three significant digits below 1).
  */
 
-/** Format a number for display on an axis or in the tooltip. */
+/**
+ * Format a number for display on an axis or in the tooltip.
+ * Integers print without decimal; very large/small magnitudes switch to
+ * exponential notation; values between 1e-4 and 1 use toPrecision(3);
+ * everything else uses toFixed(2).
+ * @param n - Number to format
+ * @returns Formatted string suitable for axis labels and tooltips
+ */
 export function formatNumber(n: number): string {
   if (Number.isInteger(n)) return n.toFixed(0);
   const abs = Math.abs(n);

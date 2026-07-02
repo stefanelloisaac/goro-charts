@@ -23,6 +23,10 @@ export class Surface {
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
+    // Accessibility
+    canvas.setAttribute('role', 'img');
+    canvas.tabIndex = 0;
+
     this.dpr = window.devicePixelRatio || 1;
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Canvas 2D context not available');

@@ -33,12 +33,12 @@ export function slowSineGen(base = 50, amp = 8, period = 600): Generator {
 }
 
 /** Sine over a busy baseline with noise — feels like requests/sec. */
-export function noisySineGen(base = 8000, amp = 2500, period = 400): Generator {
+export function noisySineGen(base = 8000, amp = 2500, period = 400, noise = 1200): Generator {
   let i = 0;
   const k = (2 * Math.PI) / period;
   return {
     next() {
-      const v = base + Math.sin(i * k) * amp + (Math.random() - 0.5) * 1200;
+      const v = base + Math.sin(i * k) * amp + (Math.random() - 0.5) * noise;
       i++;
       return v;
     },

@@ -19,8 +19,8 @@ export function buildMetrics(host: HTMLElement): MetricEls {
     els[key] = el.querySelector('.value') as HTMLElement;
   };
   add('pps', 'Points / sec');
-  add('last', 'Last draw');
-  add('avg', 'Avg draw');
+  add('last', 'Last append');
+  add('avg', 'Avg append');
   add('ticks', 'Ticks');
   add('total', 'Total points');
   return els;

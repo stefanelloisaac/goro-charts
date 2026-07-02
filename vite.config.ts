@@ -9,5 +9,6 @@ export default defineConfig({
       formats: ['es'],
       fileName: () => 'goro-charts.js',
     },
+    sourcemap: true,
   },
 });
