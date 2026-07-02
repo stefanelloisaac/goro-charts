@@ -15,7 +15,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: [18, 20, 22]
+        # The published library runs on Node 18+ (see package.json engines) —
+        # it's browser/Canvas code with no Node runtime deps. The dev toolchain
+        # (vitest 4 / rolldown) requires Node 20.12+, so CI runs on 20 and 22.
+        node-version: [20, 22]
 
     steps:
       - name: Checkout
