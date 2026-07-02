@@ -11,7 +11,7 @@
  * ```
  */
 
-import type { ChartOpts } from './types.ts'
+import type { ChartOpts } from './types.ts';
 
 /** Dark theme preset. */
 export const DARK: ChartOpts = {
@@ -21,7 +21,7 @@ export const DARK: ChartOpts = {
   crosshairColor: 'rgba(255,255,255,0.3)',
   pointColor: '#4ea8ff',
   bgColor: '#111',
-}
+};
 
 /** Light theme preset. */
 export const LIGHT: ChartOpts = {
@@ -31,4 +31,4 @@ export const LIGHT: ChartOpts = {
   crosshairColor: 'rgba(0,0,0,0.18)',
   pointColor: '#2563eb',
   bgColor: '#fff',
-}
+};

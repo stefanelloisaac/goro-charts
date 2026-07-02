@@ -1,5 +1,5 @@
-import { resolve } from 'node:path'
-import { defineConfig } from 'vite'
+import { resolve } from 'node:path';
+import { defineConfig } from 'vite';
 
 export default defineConfig({
   build: {
@@ -10,4 +10,4 @@ export default defineConfig({
       fileName: () => 'goro-charts.js',
     },
   },
-})
+});

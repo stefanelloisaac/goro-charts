@@ -25,9 +25,9 @@ npm install goro-charts
 ## Quick start
 
 ```ts
-import { LineChart } from 'goro-charts'
+import { LineChart } from 'goro-charts';
 
-const canvas = document.querySelector('canvas') as HTMLCanvasElement
+const canvas = document.querySelector('canvas') as HTMLCanvasElement;
 
 const chart = new LineChart(canvas, {
   series: [
@@ -36,13 +36,13 @@ const chart = new LineChart(canvas, {
   ],
   maxPoints: 2000,
   autoDraw: true,
-})
+});
 
-chart.append(0, 0, 52)     // CPU  @ x=0
-chart.append(1, 0, 38)     // Temp @ x=0
+chart.append(0, 0, 52); // CPU  @ x=0
+chart.append(1, 0, 38); // Temp @ x=0
 
-chart.appendBatch(0, [1, 2, 3], [55, 58, 57])
-chart.appendBatch(1, [1, 2, 3], [39, 40, 39])
+chart.appendBatch(0, [1, 2, 3], [55, 58, 57]);
+chart.appendBatch(1, [1, 2, 3], [39, 40, 39]);
 ```
 
 ---
@@ -52,19 +52,19 @@ chart.appendBatch(1, [1, 2, 3], [39, 40, 39])
 Every chart holds one or more series. Each series owns its visual identity:
 
 ```ts
-import type { SeriesConfig } from 'goro-charts'
+import type { SeriesConfig } from 'goro-charts';
 
 interface SeriesConfig {
   /** Display name for the legend and crosshair tooltip. */
-  name: string
+  name: string;
   /** Line stroke, crosshair dot, and legend swatch colour. */
-  color: string
+  color: string;
   /** Line stroke width (AreaChart: top stroke width). Falls back to ChartOpts.lineWidth. */
-  lineWidth?: number
+  lineWidth?: number;
   /** Area fill colour (meaningful only on AreaChart). */
-  fillColor?: string
+  fillColor?: string;
   /** Area fill opacity 0–1 (meaningful only on AreaChart). */
-  fillOpacity?: number
+  fillOpacity?: number;
 }
 ```
 
@@ -98,7 +98,7 @@ const chart = new AreaChart(canvas, {
   ],
   maxPoints: 2000,
   autoDraw: true,
-})
+});
 ```
 
 ---
@@ -119,7 +119,7 @@ const chart = new ScatterChart(canvas, {
   ],
   maxPoints: 5000,
   autoDraw: true,
-})
+});
 ```
 
 ---
@@ -128,28 +128,28 @@ const chart = new ScatterChart(canvas, {
 
 Every data method takes a **series index** as the first argument. `setMaxPoints()`, `clear()`, and `draw()` operate on all series.
 
-| Method | Signature | Description |
-|---|---|---|
-| `setData` | `(seriesIndex, x: Float64Array, y: Float64Array)` | Snapshot: replace a series. O(n) extent. |
-| `append` | `(seriesIndex, x: number, y: number)` | Ring: append one point. O(1) amortized. |
-| `appendBatch` | `(seriesIndex, xs: ArrayLike<number>, ys: ArrayLike<number>)` | Ring: append a batch. O(k). |
-| `setMaxPoints` | `(maxPoints: number)` | Resize the streaming window for all series. |
-| `clear` | `()` | Empty all series and reset the grid domain. |
-| `draw` | `()` | Manual paint. No-op when clean and no crosshair. |
-| `suspendDraw` | `()` | Pause rAF-coalesced drawing. Nestable — pair with `resumeDraw()`. |
-| `resumeDraw` | `()` | Resume after matching `suspendDraw()`. Draws immediately if dirty. |
-| `toImage` | `()` | Export the canvas as a PNG data URL. |
-| `destroy` | `()` | Detach observers, release buffers. |
+| Method         | Signature                                                     | Description                                                        |
+| -------------- | ------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `setData`      | `(seriesIndex, x: Float64Array, y: Float64Array)`             | Snapshot: replace a series. O(n) extent.                           |
+| `append`       | `(seriesIndex, x: number, y: number)`                         | Ring: append one point. O(1) amortized.                            |
+| `appendBatch`  | `(seriesIndex, xs: ArrayLike<number>, ys: ArrayLike<number>)` | Ring: append a batch. O(k).                                        |
+| `setMaxPoints` | `(maxPoints: number)`                                         | Resize the streaming window for all series.                        |
+| `clear`        | `()`                                                          | Empty all series and reset the grid domain.                        |
+| `draw`         | `()`                                                          | Manual paint. No-op when clean and no crosshair.                   |
+| `suspendDraw`  | `()`                                                          | Pause rAF-coalesced drawing. Nestable — pair with `resumeDraw()`.  |
+| `resumeDraw`   | `()`                                                          | Resume after matching `suspendDraw()`. Draws immediately if dirty. |
+| `toImage`      | `()`                                                          | Export the canvas as a PNG data URL.                               |
+| `destroy`      | `()`                                                          | Detach observers, release buffers.                                 |
 
 ### Read-only properties
 
-| Property | Type | Description |
-|---|---|---|
-| `seriesCount` | `number` | Number of configured series |
+| Property            | Type     | Description                        |
+| ------------------- | -------- | ---------------------------------- |
+| `seriesCount`       | `number` | Number of configured series        |
 | `pointCount(index)` | `number` | Samples in the window for a series |
-| `lastValue(index)` | `number` | Most recent y (NaN if empty) |
-| `extentMin(index)` | `number` | Window y minimum (O(1)) |
-| `extentMax(index)` | `number` | Window y maximum (O(1)) |
+| `lastValue(index)`  | `number` | Most recent y (NaN if empty)       |
+| `extentMin(index)`  | `number` | Window y minimum (O(1))            |
+| `extentMax(index)`  | `number` | Window y maximum (O(1))            |
 
 ---
 
@@ -158,13 +158,13 @@ Every data method takes a **series index** as the first argument. `setMaxPoints(
 Replace entire series at once. Can be mixed with ring mode on different series.
 
 ```ts
-const x = new Float64Array([0, 1, 2, 3, 4])
-const cpu  = new Float64Array([50, 53, 55, 52, 51])
-const temp = new Float64Array([36, 37, 38, 37, 36])
+const x = new Float64Array([0, 1, 2, 3, 4]);
+const cpu = new Float64Array([50, 53, 55, 52, 51]);
+const temp = new Float64Array([36, 37, 38, 37, 36]);
 
-chart.setData(0, x, cpu)
-chart.setData(1, x, temp)
-chart.draw()
+chart.setData(0, x, cpu);
+chart.setData(1, x, temp);
+chart.draw();
 ```
 
 ---
@@ -178,13 +178,13 @@ const chart = new LineChart(canvas, {
   series: [{ name: 'CPU', color: '#4ea8ff' }],
   maxPoints: 2000,
   autoDraw: true,
-})
+});
 
-let t = 0
+let t = 0;
 setInterval(() => {
-  chart.append(0, t, Math.random() * 100)
-  t++
-}, 1000)
+  chart.append(0, t, Math.random() * 100);
+  t++;
+}, 1000);
 ```
 
 ---
@@ -193,43 +193,43 @@ setInterval(() => {
 
 ### `ChartOpts` (constructor)
 
-| Option | Default | Description |
-|---|---|---|
-| `series` | `[{ name: 'Series 0', color: '#4ea8ff' }]` | Array of per-series visual configs |
-| `padding` | `[16, 16, 32, 56]` | `[top, right, bottom, left]` in CSS pixels |
-| `gridColor` | `rgba(255,255,255,0.08)` | Dashed internal grid line colour |
-| `axisColor` | `rgba(255,255,255,0.25)` | Grid frame stroke colour |
-| `textColor` | `rgba(255,255,255,0.5)` | Tick labels, legend text, tooltip labels |
-| `fontSize` | `11` | Base font size for all text |
-| `fontFamily` | `system-ui, …` | Font stack for all text |
-| `bgColor` | `'#111'` | Canvas background fill |
-| `crosshairColor` | `rgba(255,255,255,0.3)` | Crosshair guide line colour |
-| `crosshairWidth` | `1` | Crosshair guide line width |
-| `pointRadius` | `4` | Crosshair marker dot radius |
-| `xTicks` | `8` | Approximate X-axis tick count |
-| `yTicks` | `6` | Approximate Y-axis tick count |
-| `maxPoints` | `0` | Activate ring streaming mode (0 = off) |
-| `autoDraw` | `false` | Coalesce data changes into one rAF draw |
-| `yMin` | `0` | Fixed Y-axis lower bound (0 = auto). Pair with `yMax`. |
-| `yMax` | `0` | Fixed Y-axis upper bound (0 = auto). Pair with `yMin`. |
-| `maxDots` | `2000` | Max dots before scatter chart stride-thinning kicks in |
-| `lineColor` | `#4ea8ff` | Fallback line colour |
-| `lineWidth` | `1.5` | Fallback line width |
-| `fillColor` | `#4ea8ff` | Fallback area fill |
-| `fillOpacity` | `0.15` | Fallback area fill opacity |
-| `pointColor` | `#4ea8ff` | Fallback crosshair dot colour |
+| Option           | Default                                    | Description                                            |
+| ---------------- | ------------------------------------------ | ------------------------------------------------------ |
+| `series`         | `[{ name: 'Series 0', color: '#4ea8ff' }]` | Array of per-series visual configs                     |
+| `padding`        | `[16, 16, 32, 56]`                         | `[top, right, bottom, left]` in CSS pixels             |
+| `gridColor`      | `rgba(255,255,255,0.08)`                   | Dashed internal grid line colour                       |
+| `axisColor`      | `rgba(255,255,255,0.25)`                   | Grid frame stroke colour                               |
+| `textColor`      | `rgba(255,255,255,0.5)`                    | Tick labels, legend text, tooltip labels               |
+| `fontSize`       | `11`                                       | Base font size for all text                            |
+| `fontFamily`     | `system-ui, …`                             | Font stack for all text                                |
+| `bgColor`        | `'#111'`                                   | Canvas background fill                                 |
+| `crosshairColor` | `rgba(255,255,255,0.3)`                    | Crosshair guide line colour                            |
+| `crosshairWidth` | `1`                                        | Crosshair guide line width                             |
+| `pointRadius`    | `4`                                        | Crosshair marker dot radius                            |
+| `xTicks`         | `8`                                        | Approximate X-axis tick count                          |
+| `yTicks`         | `6`                                        | Approximate Y-axis tick count                          |
+| `maxPoints`      | `0`                                        | Activate ring streaming mode (0 = off)                 |
+| `autoDraw`       | `false`                                    | Coalesce data changes into one rAF draw                |
+| `yMin`           | `0`                                        | Fixed Y-axis lower bound (0 = auto). Pair with `yMax`. |
+| `yMax`           | `0`                                        | Fixed Y-axis upper bound (0 = auto). Pair with `yMin`. |
+| `maxDots`        | `2000`                                     | Max dots before scatter chart stride-thinning kicks in |
+| `lineColor`      | `#4ea8ff`                                  | Fallback line colour                                   |
+| `lineWidth`      | `1.5`                                      | Fallback line width                                    |
+| `fillColor`      | `#4ea8ff`                                  | Fallback area fill                                     |
+| `fillOpacity`    | `0.15`                                     | Fallback area fill opacity                             |
+| `pointColor`     | `#4ea8ff`                                  | Fallback crosshair dot colour                          |
 
 ### `SeriesConfig` (per series)
 
-| Field | Required | Default | Description |
-|---|---|---|---|
-| `name` | yes | — | Legend and tooltip label |
-| `color` | yes | — | Line, dot, and legend swatch colour |
-| `lineWidth` | no | `ChartOpts.lineWidth` | Stroke width |
-| `dash` | no | — | Dash pattern, e.g. `[8, 4]` for dashed lines |
-| `fillColor` | no | `ChartOpts.fillColor` | Area fill colour |
-| `fillOpacity` | no | `ChartOpts.fillOpacity` | Area fill opacity |
-| `yAxis` | no | `'left'` | Which Y axis this series maps to (`'left'` \| `'right'`) |
+| Field         | Required | Default                 | Description                                              |
+| ------------- | -------- | ----------------------- | -------------------------------------------------------- |
+| `name`        | yes      | —                       | Legend and tooltip label                                 |
+| `color`       | yes      | —                       | Line, dot, and legend swatch colour                      |
+| `lineWidth`   | no       | `ChartOpts.lineWidth`   | Stroke width                                             |
+| `dash`        | no       | —                       | Dash pattern, e.g. `[8, 4]` for dashed lines             |
+| `fillColor`   | no       | `ChartOpts.fillColor`   | Area fill colour                                         |
+| `fillOpacity` | no       | `ChartOpts.fillOpacity` | Area fill opacity                                        |
+| `yAxis`       | no       | `'left'`                | Which Y axis this series maps to (`'left'` \| `'right'`) |
 
 ---
 
@@ -279,7 +279,7 @@ const chart = new LineChart(canvas, {
   ],
   maxPoints: 2000,
   autoDraw: true,
-})
+});
 ```
 
 ---
@@ -305,11 +305,11 @@ new LineChart(canvas, { ...LIGHT, series: [...] })
 `suspendDraw()` pauses the rAF-coalesced draw scheduler. Pair it with `resumeDraw()` to batch many append / setData calls without intermediate paints. Nestable — pause N times, resume N times.
 
 ```ts
-chart.suspendDraw()
+chart.suspendDraw();
 for (const batch of batches) {
-  chart.appendBatch(0, batch.x, batch.y)
+  chart.appendBatch(0, batch.x, batch.y);
 }
-chart.resumeDraw() // one draw, then normal scheduling resumes
+chart.resumeDraw(); // one draw, then normal scheduling resumes
 ```
 
 ---
@@ -323,7 +323,7 @@ new LineChart(canvas, {
   yMin: 0,
   yMax: 100,
   series: [{ name: 'CPU', color: '#4ea8ff' }],
-})
+});
 ```
 
 When both are `0` (the default) the grid domain expands automatically from data.

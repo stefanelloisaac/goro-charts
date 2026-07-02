@@ -6,18 +6,13 @@
  * thinning step is `floor(n / maxDots)`.
  */
 
-import { ChartBase } from './chart-base.ts'
-import { renderScatter } from '../render/scatter.ts'
-import type { SeriesView, PlotRect, ResolvedOpts } from '../types.ts'
+import { ChartBase } from './chart-base.ts';
+import { renderScatter } from '../render/scatter.ts';
+import type { SeriesView, PlotRect, ResolvedOpts } from '../types.ts';
 
 /** High-performance Canvas 2D scatter chart. */
 export class ScatterChart extends ChartBase {
-  protected renderSeries(
-    ctx: CanvasRenderingContext2D,
-    view: SeriesView,
-    plot: PlotRect,
-    opts: ResolvedOpts,
-  ): void {
-    renderScatter(ctx, view, plot, opts)
+  protected renderSeries(ctx: CanvasRenderingContext2D, view: SeriesView, plot: PlotRect, opts: ResolvedOpts): void {
+    renderScatter(ctx, view, plot, opts);
   }
 }

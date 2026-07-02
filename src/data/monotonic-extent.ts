@@ -14,27 +14,27 @@
 
 /** Incremental sliding-window extent tracker. */
 export class MonotonicExtent {
-  private cap: number
-  private vMin: Float64Array
-  private sMin: Float64Array
-  private hMin = 0
-  private nMin = 0
-  private vMax: Float64Array
-  private sMax: Float64Array
-  private hMax = 0
-  private nMax = 0
+  private cap: number;
+  private vMin: Float64Array;
+  private sMin: Float64Array;
+  private hMin = 0;
+  private nMin = 0;
+  private vMax: Float64Array;
+  private sMax: Float64Array;
+  private hMax = 0;
+  private nMax = 0;
 
   constructor(cap: number) {
-    this.cap = cap
-    this.vMin = new Float64Array(cap)
-    this.sMin = new Float64Array(cap)
-    this.vMax = new Float64Array(cap)
-    this.sMax = new Float64Array(cap)
+    this.cap = cap;
+    this.vMin = new Float64Array(cap);
+    this.sMin = new Float64Array(cap);
+    this.vMax = new Float64Array(cap);
+    this.sMax = new Float64Array(cap);
   }
 
   /** Reset to empty (keeps allocated buffers). */
   clear(): void {
-    this.hMin = this.nMin = this.hMax = this.nMax = 0
+    this.hMin = this.nMin = this.hMax = this.nMax = 0;
   }
 
   /**
@@ -44,44 +44,44 @@ export class MonotonicExtent {
    * @param windowStart oldest seq still inside the window
    */
   push(value: number, seq: number, windowStart: number): void {
-    const cap = this.cap
+    const cap = this.cap;
 
     // Canonical order (evict → pop → append) keeps each deque length ≤ cap.
-    const vMin = this.vMin
-    const sMin = this.sMin
+    const vMin = this.vMin;
+    const sMin = this.sMin;
     while (this.nMin > 0 && sMin[this.hMin] < windowStart) {
-      this.hMin = this.hMin + 1 === cap ? 0 : this.hMin + 1
-      this.nMin--
+      this.hMin = this.hMin + 1 === cap ? 0 : this.hMin + 1;
+      this.nMin--;
     }
     while (this.nMin > 0 && vMin[(this.hMin + this.nMin - 1) % cap] >= value) {
-      this.nMin--
+      this.nMin--;
     }
-    let ib = (this.hMin + this.nMin) % cap
-    vMin[ib] = value
-    sMin[ib] = seq
-    this.nMin++
+    let ib = (this.hMin + this.nMin) % cap;
+    vMin[ib] = value;
+    sMin[ib] = seq;
+    this.nMin++;
 
-    const vMax = this.vMax
-    const sMax = this.sMax
+    const vMax = this.vMax;
+    const sMax = this.sMax;
     while (this.nMax > 0 && sMax[this.hMax] < windowStart) {
-      this.hMax = this.hMax + 1 === cap ? 0 : this.hMax + 1
-      this.nMax--
+      this.hMax = this.hMax + 1 === cap ? 0 : this.hMax + 1;
+      this.nMax--;
     }
     while (this.nMax > 0 && vMax[(this.hMax + this.nMax - 1) % cap] <= value) {
-      this.nMax--
+      this.nMax--;
     }
-    ib = (this.hMax + this.nMax) % cap
-    vMax[ib] = value
-    sMax[ib] = seq
-    this.nMax++
+    ib = (this.hMax + this.nMax) % cap;
+    vMax[ib] = value;
+    sMax[ib] = seq;
+    this.nMax++;
   }
 
   /** Current window minimum. */
   get min(): number {
-    return this.vMin[this.hMin]
+    return this.vMin[this.hMin];
   }
   /** Current window maximum. */
   get max(): number {
-    return this.vMax[this.hMax]
+    return this.vMax[this.hMax];
   }
 }

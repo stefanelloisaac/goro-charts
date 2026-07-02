@@ -8,8 +8,8 @@
 
 /** Range guard: a zero-width range collapses to 1 so tick math stays finite. */
 function niceRange(min: number, max: number): number {
-  const r = max - min
-  return r === 0 ? 1 : r
+  const r = max - min;
+  return r === 0 ? 1 : r;
 }
 
 /**
@@ -18,14 +18,14 @@ function niceRange(min: number, max: number): number {
  * @param maxTicks approximate desired number of ticks
  */
 function niceSpacing(range: number, maxTicks: number): number {
-  const exp = Math.floor(Math.log10(range / maxTicks))
-  const frac = range / maxTicks / Math.pow(10, exp)
-  let nice: number
-  if (frac <= 1.5) nice = 1
-  else if (frac <= 3.5) nice = 2
-  else if (frac <= 7.5) nice = 5
-  else nice = 10
-  return nice * Math.pow(10, exp)
+  const exp = Math.floor(Math.log10(range / maxTicks));
+  const frac = range / maxTicks / Math.pow(10, exp);
+  let nice: number;
+  if (frac <= 1.5) nice = 1;
+  else if (frac <= 3.5) nice = 2;
+  else if (frac <= 7.5) nice = 5;
+  else nice = 10;
+  return nice * Math.pow(10, exp);
 }
 
 /**
@@ -33,12 +33,12 @@ function niceSpacing(range: number, maxTicks: number): number {
  * @param maxTicks approximate desired number of ticks (actual count varies)
  */
 export function generateTicks(min: number, max: number, maxTicks: number): number[] {
-  const spacing = niceSpacing(niceRange(min, max), maxTicks)
-  const start = Math.ceil(min / spacing) * spacing
-  const end = Math.floor(max / spacing) * spacing
-  const ticks: number[] = []
+  const spacing = niceSpacing(niceRange(min, max), maxTicks);
+  const start = Math.ceil(min / spacing) * spacing;
+  const end = Math.floor(max / spacing) * spacing;
+  const ticks: number[] = [];
   for (let v = start; v <= end + spacing * 0.5; v += spacing) {
-    ticks.push(v)
+    ticks.push(v);
   }
-  return ticks
+  return ticks;
 }

@@ -7,5 +7,5 @@ export function fmt(n: number, digits = 0): string {
   return n.toLocaleString(undefined, {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
-  })
+  });
 }

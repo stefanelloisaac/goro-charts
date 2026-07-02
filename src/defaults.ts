@@ -10,7 +10,7 @@
  * expands from data unless the user sets non-zero values.
  */
 
-import type { ResolvedOpts } from './types.ts'
+import type { ResolvedOpts } from './types.ts';
 
 export const CHART_DEFAULTS: ResolvedOpts = {
   series: [{ name: 'Series 0', color: '#4ea8ff', lineWidth: 1.5 }],
@@ -36,4 +36,4 @@ export const CHART_DEFAULTS: ResolvedOpts = {
   yMin: 0,
   yMax: 0,
   maxDots: 2000,
-}
+};
