@@ -8,6 +8,18 @@
  * decouples `render/` from `data/` so either can change independently.
  */
 
+/**
+ * Data-array ownership for snapshot mode (`setData`).
+ *
+ * - `'copy'` (default): the store copies the caller's arrays into fresh buffers;
+ *   the caller may mutate the originals freely without affecting the chart.
+ * - `'borrowed'`: the store keeps the caller's arrays by reference — the caller
+ *   **must** treat them as immutable for as long as the chart holds them. The
+ *   arrays are read-only to the chart; mutating them externally leads to
+ *   undefined behaviour.
+ */
+export type DataOwnership = 'copy' | 'borrowed';
+
 /** Per-series visual configuration. */
 export interface SeriesConfig {
   /** Display name for legends and the crosshair tooltip. */

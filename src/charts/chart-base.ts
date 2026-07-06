@@ -28,7 +28,7 @@ import { renderLegend } from '../render/legend.ts';
 import { renderStackedBands } from '../render/stacked-band.ts';
 import { formatNumber } from '../math/format.ts';
 import { pxToX, xToPx } from '../math/scale.ts';
-import type { ChartOpts, ResolvedOpts, SeriesConfig, SeriesView, PlotRect, Domain } from '../types.ts';
+import type { ChartOpts, ResolvedOpts, SeriesConfig, SeriesView, PlotRect, Domain, DataOwnership } from '../types.ts';
 import type { SeriesHit } from '../render/crosshair.ts';
 
 /** Abstract base for all chart types. */
@@ -329,13 +329,23 @@ export abstract class ChartBase {
   /**
    * Snapshot mode: replace the series at `index` (O(n) extent).
    * @param index - Series index (0-based)
-   * @param x - X values, must be monotonically increasing
-   * @param y - Y values, must have the same length as x
-   * @throws {Error} if `index` is out of range, or x/y length mismatch
+   * @param x - X values, must be finite and monotonically increasing
+   * @param y - Y values, may contain NaN (reserved for gaps v1.6.0); non-finite other than NaN is rejected
+   * @param ownership - `'copy'` (default): store copies the arrays; `'borrowed'`: store keeps caller's arrays by reference (must be treated as immutable)
+   * @throws {Error} if `index` is out of range, length mismatch, empty, non-finite X, or non-monotonic X
    */
-  setData(index: number, x: Float64Array<ArrayBufferLike>, y: Float64Array<ArrayBufferLike>): void {
+  setData(
+    index: number,
+    x: Float64Array<ArrayBufferLike>,
+    y: Float64Array<ArrayBufferLike>,
+    ownership?: DataOwnership,
+  ): void {
     if (this.destroyed) return;
-    this.storeAt(index).setData(x, y);
+    try {
+      this.storeAt(index).setData(x, y, ownership);
+    } catch (e) {
+      throw new Error(`series ${index}: ${(e as Error).message}`, { cause: e });
+    }
     this.gridPinned = false;
     this.invalidate();
   }
@@ -343,28 +353,36 @@ export abstract class ChartBase {
   /**
    * Ring mode: append one sample to series `index`.
    * @param index - Series index (0-based)
-   * @param x - X value (must be monotonically increasing)
-   * @param y - Y value
+   * @param x - X value (must be finite and monotonically increasing)
+   * @param y - Y value (NaN is allowed — reserved for gaps v1.6.0)
    * @throws {Error} if ring mode is not active (maxPoints not set)
-   * @throws {Error} if `index` is out of range
+   * @throws {Error} if `index` is out of range, x is not finite, x is non-monotonic, or y is non-finite (NaN allowed)
    */
   append(index: number, x: number, y: number): void {
     if (this.destroyed) return;
-    this.storeAt(index).append(x, y);
+    try {
+      this.storeAt(index).append(x, y);
+    } catch (e) {
+      throw new Error(`series ${index}: ${(e as Error).message}`, { cause: e });
+    }
     this.invalidate();
   }
 
   /**
    * Ring mode: append a batch of samples to series `index`.
    * @param index - Series index (0-based)
-   * @param xs - X values (must be monotonically increasing)
-   * @param ys - Y values, must have the same length as xs
+   * @param xs - X values (must be finite and monotonically increasing)
+   * @param ys - Y values (NaN is allowed — reserved for gaps v1.6.0)
    * @throws {Error} if ring mode is not active
-   * @throws {Error} if `index` is out of range or xs/ys length mismatch
+   * @throws {Error} if `index` is out of range, length mismatch, non-finite X, non-monotonic X, or non-finite Y (NaN allowed)
    */
   appendBatch(index: number, xs: ArrayLike<number>, ys: ArrayLike<number>): void {
     if (this.destroyed) return;
-    this.storeAt(index).appendBatch(xs, ys);
+    try {
+      this.storeAt(index).appendBatch(xs, ys);
+    } catch (e) {
+      throw new Error(`series ${index}: ${(e as Error).message}`, { cause: e });
+    }
     this.invalidate();
   }
 

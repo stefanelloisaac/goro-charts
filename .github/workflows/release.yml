@@ -35,9 +35,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Verify (lint, typecheck, test)
+      - name: Verify (lint, check README, typecheck, test)
         run: |
           npm run lint
+          npm run check:readme
           npm run typecheck
           npm run test
 

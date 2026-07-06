@@ -13,6 +13,7 @@ dist-demo
 coverage
 *.local
 *.tsbuildinfo
+.readme-check
 
 # Editor directories and files
 .vscode/*

@@ -11,7 +11,7 @@
  */
 
 import { RingBuffer } from './ring-buffer.ts';
-import type { SeriesView } from '../types.ts';
+import type { SeriesView, DataOwnership } from '../types.ts';
 
 /** Owns the series data and computes/caches its extents. */
 export class SeriesStore implements SeriesView {
@@ -45,16 +45,23 @@ export class SeriesStore implements SeriesView {
   /**
    * Snapshot mode: replace the whole series. Extents computed once in O(n).
    * Disables any active ring mode.
+   *
+   * By default (`ownership: 'copy'`) the store copies the caller's arrays into
+   * fresh buffers — the caller may mutate the originals freely after the call.
+   * Pass `'borrowed'` to keep the caller's arrays by reference (must be treated
+   * as immutable for as long as the chart holds them).
+   *
    * @throws {Error} if x and y have different lengths
    * @throws {Error} if x is empty
+   * @throws {Error} if any x value is not finite, or x is not monotonically increasing
+   * @throws {Error} if any y value is not finite (NaN in Y is allowed — reserved for gaps v1.6.0)
    */
-  setData(x: Float64Array<ArrayBufferLike>, y: Float64Array<ArrayBufferLike>): void {
-    if (x.length !== y.length) throw new Error('x and y must have same length');
-    if (x.length === 0) throw new Error('data arrays must not be empty');
+  setData(x: Float64Array<ArrayBufferLike>, y: Float64Array<ArrayBufferLike>, ownership: DataOwnership = 'copy'): void {
+    this.validateSnapshot(x, y);
 
     this.ring = null;
-    this.xArr = x;
-    this.yArr = y;
+    this.xArr = ownership === 'copy' ? new Float64Array(x) : x;
+    this.yArr = ownership === 'copy' ? new Float64Array(y) : y;
     this.head = 0;
     this.count = x.length;
     this.cap = x.length;
@@ -66,8 +73,14 @@ export class SeriesStore implements SeriesView {
     let yMax = -Infinity;
     for (let i = 0; i < y.length; i++) {
       const v = y[i];
+      if (Number.isNaN(v)) continue; // reserved for gap rendering (v1.6.0)
       if (v < yMin) yMin = v;
       if (v > yMax) yMax = v;
+    }
+    if (yMin === Infinity) {
+      // all Y values were NaN — degenerate safe range
+      yMin = 0;
+      yMax = 0;
     }
     this.applyExtent(yMin, yMax);
   }
@@ -75,11 +88,20 @@ export class SeriesStore implements SeriesView {
   /**
    * Ring mode: append one sample (x must be monotonically increasing).
    * @throws {Error} if ring mode is not active (maxPoints not set)
+   * @throws {Error} if x is not finite
+   * @throws {Error} if x is < last x (not monotonically increasing)
+   * @throws {Error} if y is not finite (NaN in Y is allowed — reserved for gaps v1.6.0)
    */
   append(x: number, y: number): void {
     const r = this.requireRing('append');
+    if (!Number.isFinite(x)) {
+      throw new Error(`append x=${x} is not finite`);
+    }
     if (r.count > 0 && x < r.xLast) {
-      console.warn(`[goro-charts] append x=${x} is < last x=${r.xLast}; x values must be monotonically increasing`);
+      throw new Error(`append x=${x} is < last x=${r.xLast}; x must be monotonically increasing`);
+    }
+    if (!isFiniteOrNaN(y)) {
+      throw new Error(`append y=${y} is not finite`);
     }
     r.push(x, y);
     this.syncFromRing();
@@ -87,13 +109,38 @@ export class SeriesStore implements SeriesView {
 
   /**
    * Ring mode: append a batch of parallel samples. O(k).
+   *
+   * The entire batch is validated before any sample is pushed, so a partial
+   * batch never corrupts the ring.
+   *
    * @throws {Error} if ring mode is not active
    * @throws {Error} if xs and ys have different lengths
+   * @throws {Error} if any x is not finite, or xs are not monotonically increasing
+   * @throws {Error} if any y is not finite (NaN in Y is allowed — reserved for gaps v1.6.0)
    */
   appendBatch(xs: ArrayLike<number>, ys: ArrayLike<number>): void {
     const r = this.requireRing('appendBatch');
     if (xs.length !== ys.length) throw new Error('xs and ys must have same length');
-    for (let i = 0; i < xs.length; i++) r.push(xs[i], ys[i]);
+
+    // Validate the entire batch before touching ring state, so a rejected
+    // batch never leaves the ring half-updated.
+    const k = xs.length;
+    if (k === 0) return;
+    for (let i = 0; i < k; i++) {
+      if (!Number.isFinite(xs[i])) {
+        throw new Error(`xs[${i}]=${xs[i]} is not finite`);
+      }
+      if (i > 0 && xs[i] < xs[i - 1]) {
+        throw new Error(
+          `xs not monotonically increasing at batch index ${i}: xs[${i}]=${xs[i]} < xs[${i - 1}]=${xs[i - 1]}`,
+        );
+      }
+      if (!isFiniteOrNaN(ys[i])) {
+        throw new Error(`ys[${i}]=${ys[i]} is not finite`);
+      }
+    }
+
+    for (let i = 0; i < k; i++) r.push(xs[i], ys[i]);
     this.syncFromRing();
   }
 
@@ -143,6 +190,36 @@ export class SeriesStore implements SeriesView {
     return lo;
   }
 
+  /**
+   * Validate snapshot data before accepting it into the store.
+   * Checks length, non-empty, finite + monotonic X, and finite Y.
+   * @throws {Error} with position-aware message on any violation.
+   */
+  private validateSnapshot(x: Float64Array<ArrayBufferLike>, y: Float64Array<ArrayBufferLike>): void {
+    if (x.length !== y.length) {
+      throw new Error(`x and y length mismatch: x.length=${x.length}, y.length=${y.length}`);
+    }
+    if (x.length === 0) throw new Error('data arrays must not be empty');
+
+    if (!Number.isFinite(x[0])) {
+      throw new Error(`x[0]=${x[0]} is not finite`);
+    }
+    for (let i = 1; i < x.length; i++) {
+      if (!Number.isFinite(x[i])) {
+        throw new Error(`x[${i}]=${x[i]} is not finite`);
+      }
+      if (x[i] < x[i - 1]) {
+        throw new Error(`x not monotonically increasing at index ${i}: x[${i}]=${x[i]} < x[${i - 1}]=${x[i - 1]}`);
+      }
+    }
+
+    for (let i = 0; i < y.length; i++) {
+      if (!isFiniteOrNaN(y[i])) {
+        throw new Error(`y[${i}]=${y[i]} is not finite`);
+      }
+    }
+  }
+
   private requireRing(method: string): RingBuffer {
     if (!this.ring) {
       throw new Error(`${method}() requires the chart to be created with { maxPoints }`);
@@ -181,4 +258,14 @@ export class SeriesStore implements SeriesView {
       this.yMax = yMax;
     }
   }
+}
+
+/**
+ * The Y contract, shared by snapshot and ring paths: a Y value is accepted iff
+ * it is finite or `NaN`. `NaN` is a deliberate sentinel reserved for gap
+ * rendering (v1.6.0) and is excluded from the extent; `±Infinity` is rejected
+ * because it would silently corrupt the min/max scale.
+ */
+function isFiniteOrNaN(v: number): boolean {
+  return Number.isFinite(v) || Number.isNaN(v);
 }

@@ -42,6 +42,29 @@ describe('LineChart', () => {
     expect(chart.lastValue(0)).toBe(50);
   });
 
+  it('série vazia (nunca setada) não quebra o draw / a escala', () => {
+    // §4.9: "arrays vazios não quebram escalas" — uma série com count 0 é
+    // ignorada em todo o pipeline de domínio; draw() não deve lançar.
+    const chart = new LineChart(canvas);
+    expect(chart.pointCount(0)).toBe(0);
+    expect(() => chart.draw()).not.toThrow();
+  });
+
+  it('draw com apenas parte das séries populadas não quebra a escala', () => {
+    const chart = new LineChart(canvas, {
+      series: [
+        { name: 'A', color: '#f00' },
+        { name: 'B', color: '#0f0' },
+      ],
+    } as any);
+    const x = new Float64Array([0, 1, 2]) as unknown as Float64Array<ArrayBufferLike>;
+    const y = new Float64Array([10, 20, 30]) as unknown as Float64Array<ArrayBufferLike>;
+    chart.setData(0, x, y); // série 1 fica vazia
+    expect(() => chart.draw()).not.toThrow();
+    expect(chart.pointCount(0)).toBe(3);
+    expect(chart.pointCount(1)).toBe(0);
+  });
+
   it('append em ring mode', () => {
     const chart = new LineChart(canvas, { maxPoints: 100, autoDraw: false } as any);
     chart.append(0, 0, 100);
@@ -680,5 +703,57 @@ describe('Métricas (windowPointCount / drawnPointCount)', () => {
     // Deve estar próximo de ceil(2 * plotW)
     const plotW = chart['plotRect']().w;
     expect(chart.drawnPointCount).toBe(Math.ceil(plotW * 2));
+  });
+});
+
+describe('README examples (verifiable)', () => {
+  let canvas: HTMLCanvasElement;
+
+  beforeEach(() => {
+    canvas = createCanvas();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    canvas.remove();
+    vi.useRealTimers();
+  });
+
+  it('streaming example: LineChart com maxPoints + autoDraw + append em loop', () => {
+    const chart = new LineChart(canvas, {
+      series: [{ name: 'CPU', color: '#4ea8ff' }],
+      maxPoints: 10,
+      autoDraw: true,
+    } as any);
+    for (let t = 0; t < 15; t++) chart.append(0, t, Math.random() * 100);
+    expect(chart.pointCount(0)).toBe(10); // janela deslizante
+  });
+
+  it('sync example: chart1.sync(chart2) bidirecional', () => {
+    const canvas2 = createCanvas();
+    const chart1 = new LineChart(canvas, { autoDraw: false } as any);
+    const chart2 = new LineChart(canvas2, { autoDraw: false } as any);
+
+    const x = new Float64Array([0, 1, 2]) as unknown as Float64Array<ArrayBufferLike>;
+    const y = new Float64Array([10, 20, 30]) as unknown as Float64Array<ArrayBufferLike>;
+    chart1.setData(0, x, y);
+    chart1.draw();
+    chart2.setData(0, x, y);
+    chart2.draw();
+
+    chart1.sync(chart2);
+    expect(chart1['syncTargets'].has(chart2)).toBe(true);
+    expect(chart2['syncTargets'].has(chart1)).toBe(true);
+
+    canvas2.remove();
+    chart2.destroy();
+    chart1.destroy();
+  });
+
+  it('erros de validação incluem índice da série', () => {
+    const chart = new LineChart(canvas, { autoDraw: false } as any);
+    const xBad = new Float64Array([0, 1, 0]) as unknown as Float64Array<ArrayBufferLike>; // não-monotônico
+    const y = new Float64Array([10, 20, 30]) as unknown as Float64Array<ArrayBufferLike>;
+    expect(() => chart.setData(0, xBad, y)).toThrow('series 0');
   });
 });

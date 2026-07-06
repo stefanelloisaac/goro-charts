@@ -73,7 +73,12 @@ export class RingBuffer {
     this.y[phys] = yv;
 
     const s = this.seq++;
-    this.ext.push(yv, s, s - this.count + 1);
+    const windowStart = s - this.count + 1;
+    // NaN in Y is reserved for future gap rendering (v1.6.0) — exclude it
+    // from the sliding-window extent so it doesn't corrupt min/max.
+    if (!Number.isNaN(yv)) {
+      this.ext.push(yv, s, windowStart);
+    }
   }
 
   /** Reset to empty (keeps allocated buffers). */

@@ -105,4 +105,35 @@ describe('RingBuffer', () => {
     expect(r.physOf(2)).toBe(3);
     expect(r.physOf(3)).toBe(0);
   });
+
+  describe('NaN Y (reservado para gaps v1.6.0)', () => {
+    it('NaN em Y é excluído do extent', () => {
+      const r = new RingBuffer(10);
+      r.push(0, 50);
+      r.push(1, NaN);
+      r.push(2, 10);
+      expect(r.yMin).toBe(10);
+      expect(r.yMax).toBe(50);
+    });
+
+    it('todos Y NaN não quebram o extent', () => {
+      const r = new RingBuffer(5);
+      r.push(0, NaN);
+      r.push(1, NaN);
+      // Extent deve retornar 0 (valor padrão do Float64Array)
+      expect(r.yMin).toBe(0);
+      expect(r.yMax).toBe(0);
+    });
+
+    it('NaN intercalado com finitos mantém extent correto', () => {
+      const r = new RingBuffer(10);
+      r.push(0, 100);
+      r.push(1, NaN);
+      r.push(2, 50);
+      r.push(3, NaN);
+      r.push(4, 200);
+      expect(r.yMin).toBe(50);
+      expect(r.yMax).toBe(200);
+    });
+  });
 });

@@ -7,6 +7,10 @@
 
 **[Live demo →](https://stefanelloisaac.github.io/goro-charts/)**
 
+<!-- TODO: gravar e adicionar docs/assets/streaming.gif, depois descomentar:
+![Live streaming demo](docs/assets/streaming.gif)
+-->
+
 Minimal high-performance chart engine. **Canvas 2D only. Zero runtime dependencies. Framework-agnostic.** Inspired by [uPlot](https://github.com/leeoniya/uPlot) — small, fast, and covers only what you need.
 
 - **LineChart** — batched polyline with per-pixel-column min/max decimation
@@ -59,6 +63,7 @@ chart.appendBatch(1, [1, 2, 3], [39, 40, 39]);
 Every chart holds one or more series. Each series owns its visual identity:
 
 ```ts
+// signature
 import type { SeriesConfig } from 'goro-charts';
 
 interface SeriesConfig {
@@ -94,6 +99,7 @@ When `series` is omitted from `ChartOpts` a single default series is created aut
 ### `LineChart`
 
 ```ts
+// signature
 new LineChart(canvas, opts?: ChartOpts)
 ```
 
@@ -102,6 +108,7 @@ Each series is drawn as a single batched polyline. When the dataset is dense (mo
 ### `AreaChart`
 
 ```ts
+// signature
 new AreaChart(canvas, opts?: ChartOpts)
 ```
 
@@ -123,6 +130,7 @@ const chart = new AreaChart(canvas, {
 ### `ScatterChart`
 
 ```ts
+// signature
 new ScatterChart(canvas, opts?: ChartOpts)
 ```
 
@@ -131,9 +139,10 @@ Each series is drawn as filled circles, one per sampled point. When the dataset 
 ```ts
 const chart = new ScatterChart(canvas, {
   series: [
-    { name: 'Packets', color: '#f07167', pointRadius: 3.5 },
+    { name: 'Packets', color: '#f07167' },
     { name: 'Errors', color: '#ffb454', dash: [6, 3] },
   ],
+  pointRadius: 3.5,
   maxPoints: 5000,
   autoDraw: true,
 });
@@ -145,18 +154,33 @@ const chart = new ScatterChart(canvas, {
 
 Every data method takes a **series index** as the first argument. `setMaxPoints()`, `clear()`, and `draw()` operate on all series.
 
-| Method         | Signature                                                     | Description                                                        |
-| -------------- | ------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `setData`      | `(seriesIndex, x: Float64Array, y: Float64Array)`             | Snapshot: replace a series. O(n) extent.                           |
-| `append`       | `(seriesIndex, x: number, y: number)`                         | Ring: append one point. O(1) amortized.                            |
-| `appendBatch`  | `(seriesIndex, xs: ArrayLike<number>, ys: ArrayLike<number>)` | Ring: append a batch. O(k).                                        |
-| `setMaxPoints` | `(maxPoints: number)`                                         | Resize the streaming window for all series.                        |
-| `clear`        | `()`                                                          | Empty all series and reset the grid domain.                        |
-| `draw`         | `()`                                                          | Manual paint. No-op when clean and no crosshair.                   |
-| `suspendDraw`  | `()`                                                          | Pause rAF-coalesced drawing. Nestable — pair with `resumeDraw()`.  |
-| `resumeDraw`   | `()`                                                          | Resume after matching `suspendDraw()`. Draws immediately if dirty. |
-| `toImage`      | `()`                                                          | Export the canvas as a PNG data URL.                               |
-| `destroy`      | `()`                                                          | Detach observers, release buffers.                                 |
+| Method         | Signature                                                                           | Description                                                                                                                                                       |
+| -------------- | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `setData`      | `(seriesIndex, x: Float64Array, y: Float64Array, ownership?: 'copy' \| 'borrowed')` | Snapshot: replace a series. O(n) extent. Ownership: `'copy'` (default, safe) copies arrays; `'borrowed'` keeps caller's reference (must be treated as immutable). |
+| `append`       | `(seriesIndex, x: number, y: number)`                                               | Ring: append one point. O(1) amortized.                                                                                                                           |
+| `appendBatch`  | `(seriesIndex, xs: ArrayLike<number>, ys: ArrayLike<number>)`                       | Ring: append a batch. O(k).                                                                                                                                       |
+| `setMaxPoints` | `(maxPoints: number)`                                                               | Resize the streaming window for all series.                                                                                                                       |
+| `clear`        | `()`                                                                                | Empty all series and reset the grid domain.                                                                                                                       |
+| `draw`         | `()`                                                                                | Manual paint. No-op when clean and no crosshair.                                                                                                                  |
+| `suspendDraw`  | `()`                                                                                | Pause rAF-coalesced drawing. Nestable — pair with `resumeDraw()`.                                                                                                 |
+| `resumeDraw`   | `()`                                                                                | Resume after matching `suspendDraw()`. Draws immediately if dirty.                                                                                                |
+| `toImage`      | `()`                                                                                | Export the canvas as a PNG data URL.                                                                                                                              |
+| `destroy`      | `()`                                                                                | Detach observers, release buffers.                                                                                                                                |
+
+### Ownership (`copy` vs `borrowed`)
+
+`setData` accepts an optional fourth argument to control data ownership:
+
+- **`'copy'`** (default) — the chart copies your arrays into fresh buffers. You may reuse or mutate the originals freely after the call. This is the safe default.
+- **`'borrowed'`** — the chart keeps your arrays by reference to avoid allocation. The caller **must** treat the arrays as immutable for as long as the chart holds them; mutating them externally leads to undefined behaviour.
+
+```ts
+// Safe default — caller can mutate the originals later
+chart.setData(0, x, y);
+
+// Zero-copy — caller must not mutate x or y after this call
+chart.setData(0, x, y, 'borrowed');
+```
 
 ### Read-only properties
 
@@ -335,13 +359,13 @@ flat regardless of window size.
 Pre-built `DARK` and `LIGHT` colour presets ready to spread over constructor options.
 
 ```ts
-import { LineChart, DARK, LIGHT } from 'goro-charts'
+import { LineChart, DARK, LIGHT } from 'goro-charts';
 
 // Dark (default) — explicit
-new LineChart(canvas, { ...DARK, series: [...] })
+new LineChart(canvas, { ...DARK, series: [/* ... */] });
 
 // Light theme
-new LineChart(canvas, { ...LIGHT, series: [...] })
+new LineChart(canvas, { ...LIGHT, series: [/* ... */] });
 ```
 
 ---

@@ -5,69 +5,118 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] — 2026-07-06
+
+### Behavior fixes
+
+- **Data ownership contract (`copy`/`borrowed`).**
+  `setData` now **copies** the arrays by default (`'copy'`), making the chart
+  immune to external mutation. The `'borrowed'` (zero-copy) mode is available
+  as an opt-in but requires the caller to treat the arrays as immutable.
+  _(minor, behavior fix — the default semantics changed from borrowed to copy)_
+- **Numeric input validation.**
+  Length mismatches, non-monotonic X, non-finite X (`Infinity`, `-Infinity`,
+  `NaN`), and non-finite Y (`±Infinity`) are now rejected with a descriptive
+  error naming the series and position — the same contract applies both in
+  snapshot mode (`setData`) and in streaming mode (`append`/`appendBatch`).
+  `NaN` in Y is the only accepted exception (see below). Inputs previously
+  accepted silently (or only with a `console.warn`) now throw.
+  _(minor, behavior fix)_
+- **Non-monotonic append now throws.**
+  The previous `console.warn` was promoted to a thrown error to fail fast.
+  `appendBatch` validates the entire batch before pushing any sample — partial
+  batches never corrupt the ring state. _(minor, behavior fix)_
+- **NaN in Y accepted and documented.**
+  `NaN` in Y is accepted, excluded from the extent computation, and reserved
+  for gap rendering in v1.6.0. Arrays where every Y is `NaN` produce a safe
+  degenerate range. _(minor, behavior fix)_
+
+### Added
+
+- `DataOwnership = 'copy' | 'borrowed'` type and the optional `ownership`
+  parameter on `setData(index, x, y, ownership?)`.
+- `npm run check:readme` script — extracts every `ts` block from the README
+  and typechecks it against the real exported types. Wired into CI.
+- New `Check README examples` CI step (before Typecheck).
+- Reserved (commented-out TODO) slot for `docs/assets/streaming.gif` in the
+  README's first fold — the `![…]` stays commented until the asset exists, so
+  a broken image is never published.
+
+### Changed
+
+- `setData(index, x, y)` now takes an optional fourth argument `ownership`
+  (default `'copy'`).
+- README signature-reference blocks (e.g. `new LineChart(canvas, opts?:
+ChartOpts)`) are marked with `// signature` and skipped by `check:readme`,
+  keeping the readable form without breaking the semantic checking of the
+  runnable examples.
+
 ## [1.2.0] — 2026-07-06
 
 ### Behavior fixes
 
-- **Crosshair sync por valor X, não por pixel.**
-  Gráficos com tamanhos, margens e domínios diferentes agora sincronizam
-  corretamente: o valor de dado é convertido de pixel na origem e de volta
-  a pixel no target via pxToX/xToPx. Valor fora do domínio oculta o
-  crosshair no target. _(minor, behavior fix)_
-- **Stacking separa positivos e negativos.**
-  Positivos acumulam num track ascendente, negativos num track descendente,
-  sem se cancelarem. Em desenvolvimento, séries do mesmo `stack` com eixos
-  ou comprimentos divergentes geram aviso descritivo. _(minor, behavior fix)_
-- **`renderedPointCount` renomeado para `windowPointCount`.**
-  A métrica antiga mentia: retornava o total de pontos na janela, não os
-  efetivamente desenhados (o renderer decima para ~2·plotW colunas no
-  regime denso). Agora há duas métricas honestas: `windowPointCount`
-  (volume de dados) e `drawnPointCount` (estimativa pós-decimação).
-  Quem usava `renderedPointCount` deve migrar para `windowPointCount`.
+- **Crosshair sync by X value, not by pixel.**
+  Charts with different sizes, margins, and domains now sync correctly: the
+  data value is converted from pixel at the origin and back to pixel at the
+  target via pxToX/xToPx. A value outside the domain hides the crosshair on
+  the target. _(minor, behavior fix)_
+- **Stacking separates positives and negatives.**
+  Positives accumulate on an ascending track, negatives on a descending track,
+  without cancelling each other out. In development, series in the same `stack`
+  with divergent axes or lengths emit a descriptive warning.
+  _(minor, behavior fix)_
+- **`renderedPointCount` renamed to `windowPointCount`.**
+  The old metric lied: it returned the total points in the window, not those
+  actually drawn (the renderer decimates to ~2·plotW columns in the dense
+  regime). There are now two honest metrics: `windowPointCount` (data volume)
+  and `drawnPointCount` (post-decimation estimate). Anyone using
+  `renderedPointCount` should migrate to `windowPointCount`.
   _(minor, behavior fix)_
 
 ### Added
 
-- `unsync(other)` — remove sincronização bidirecional de crosshair.
-- `drawnPointCount` — estimativa de segmentos realmente desenhados após
-  decimação (útil para verificar que a decimação está ativa).
-- Stacking: validação de alinhamento entre séries do mesmo grupo (eixo e
-  comprimento) em desenvolvimento.
+- `unsync(other)` — removes bidirectional crosshair synchronization.
+- `drawnPointCount` — estimate of segments actually drawn after decimation
+  (useful to verify that decimation is active).
+- Stacking: alignment validation between series in the same group (axis and
+  length) in development.
 
 ### Changed
 
-- `injectCursor` (privado) agora recebe valor X em vez de pixel — alinhado
-  com a sincronização por valor. `notifySyncCrosshair` envia valor em vez
-  de coordenada de tela.
-- `destroy` agora remove o chart de todos os peers sincronizados antes de
-  limpar as stores.
-- `accumulateStackGroup` retorna `{ posCum, negCum }` separados em vez de
-  uma única acumulação líquida.
+- `injectCursor` (private) now receives an X value instead of a pixel —
+  aligned with value-based sync. `notifySyncCrosshair` sends a value instead
+  of a screen coordinate.
+- `destroy` now removes the chart from all synced peers before clearing the
+  stores.
+- `accumulateStackGroup` returns separate `{ posCum, negCum }` instead of a
+  single net accumulation.
 
 ## [1.1.0] — 2026-07-06
 
 ### Behavior fixes
 
-- **`yMin`/`yMax` sentinel: `0` agora é um bound legítimo.**
-  Antes `yMin: 0` e `yMax: 0` eram tratados como "auto" (descartados). Agora só
-  caem em domínio automático quando `undefined`. `yMin: 0` ancorado é o caso mais
-  comum e finalmente funciona. _(minor, behavior fix)_
-- **Teclado: navegação por ponto de dado, não por pixel.**
-  As setas movem o crosshair de ponto em ponto (lógico) da primeira série
-  não-vazia. `Shift+seta` avança 10 pontos. Antes navegava por pixel, sem
-  ancorar em dados reais. _(minor, behavior fix)_
-- **`prefers-reduced-motion` não para mais o streaming.**
-  Antes desligava `autoDraw`, interrompendo o repaint coalescido de dados ao
-  vivo. Agora só sinaliza uma flag para suprimir animações visuais (quando
-  houverem) sem afetar a atualização contínua do gráfico. _(minor, behavior fix)_
+- **`yMin`/`yMax` sentinel: `0` is now a legitimate bound.**
+  Previously `yMin: 0` and `yMax: 0` were treated as "auto" (discarded). They
+  now fall back to an automatic domain only when `undefined`. An anchored
+  `yMin: 0` is the most common case and finally works. _(minor, behavior fix)_
+- **Keyboard: navigation by data point, not by pixel.**
+  The arrow keys move the crosshair point by point (logical) across the first
+  non-empty series. `Shift+arrow` advances 10 points. It previously navigated
+  by pixel, without anchoring to real data. _(minor, behavior fix)_
+- **`prefers-reduced-motion` no longer stops streaming.**
+  It previously turned off `autoDraw`, interrupting the coalesced repaint of
+  live data. It now only sets a flag to suppress visual animations (when
+  present) without affecting the chart's continuous updates.
+  _(minor, behavior fix)_
 
 ### Changed
 
-- `ResolvedOpts.yMin` / `ResolvedOpts.yMax` agora são `number | undefined`.
-  O sentinela "auto" mudou de `0` para `undefined`. Código que dependia do
-  comportamento antigo (ex.: checagens `yMin !== 0`) deve usar `yMin !== undefined`.
-- `prefers-reduced-motion` adiciona listener `change` em runtime para reavaliar
-  a preferência sem recriar o gráfico. O listener é removido em `destroy()`.
+- `ResolvedOpts.yMin` / `ResolvedOpts.yMax` are now `number | undefined`.
+  The "auto" sentinel changed from `0` to `undefined`. Code that relied on the
+  old behavior (e.g. `yMin !== 0` checks) should use `yMin !== undefined`.
+- `prefers-reduced-motion` adds a runtime `change` listener to re-evaluate the
+  preference without recreating the chart. The listener is removed in
+  `destroy()`.
 
 ## [1.0.0]
 
