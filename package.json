@@ -1,6 +1,6 @@
 {
   "name": "goro-charts",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Minimal high-performance line and area chart engine. Canvas 2D, zero dependencies, framework-agnostic.",
   "type": "module",
   "license": "MIT",
