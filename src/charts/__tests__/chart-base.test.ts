@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { LineChart } from '../../charts/line-chart.ts';
 import { AreaChart } from '../../charts/area-chart.ts';
 import { ScatterChart } from '../../charts/scatter-chart.ts';
+import { xToPx } from '../../math/scale.ts';
 
 function createCanvas(): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
@@ -403,5 +404,254 @@ describe('prefers-reduced-motion', () => {
     listeners[0](event);
     expect(drawSpy).toHaveBeenCalledTimes(1);
     drawSpy.mockRestore();
+  });
+});
+
+describe('Crosshair sync por valor', () => {
+  let canvasA: HTMLCanvasElement;
+  let canvasB: HTMLCanvasElement;
+
+  beforeEach(() => {
+    canvasA = document.createElement('canvas');
+    canvasA.style.cssText = 'width:400px;height:200px';
+    canvasA.getBoundingClientRect = () =>
+      ({ width: 400, height: 200, top: 0, left: 0, right: 400, bottom: 200, x: 0, y: 0 }) as DOMRect;
+    document.body.appendChild(canvasA);
+
+    canvasB = document.createElement('canvas');
+    canvasB.style.cssText = 'width:600px;height:200px';
+    canvasB.getBoundingClientRect = () =>
+      ({ width: 600, height: 200, top: 0, left: 0, right: 600, bottom: 200, x: 0, y: 0 }) as DOMRect;
+    document.body.appendChild(canvasB);
+
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    canvasA.remove();
+    canvasB.remove();
+    vi.useRealTimers();
+  });
+
+  it('gráficos de tamanhos diferentes sincronizam por valor', () => {
+    const chartA = new LineChart(canvasA, { series: [{ name: 'A', color: '#f00' }], autoDraw: false } as any);
+    const chartB = new LineChart(canvasB, { series: [{ name: 'B', color: '#0f0' }], autoDraw: false } as any);
+
+    // Mesmo dataset nos dois charts
+    const x = new Float64Array([0, 50, 100]) as unknown as Float64Array<ArrayBufferLike>;
+    const y = new Float64Array([0, 100, 50]) as unknown as Float64Array<ArrayBufferLike>;
+    chartA.setData(0, x, y);
+    chartA.draw();
+    chartB.setData(0, x, y);
+    chartB.draw();
+
+    chartA.sync(chartB);
+
+    // Simula mouse no chartA no valor X = 50 (meio do domínio [0, 100])
+    const plotA = chartA['plotRect']();
+    const xPxA = xToPx(50, chartA['gridDomainLeft'], plotA);
+    chartA['cursorX'] = xPxA;
+    chartA['notifySyncCrosshair']();
+
+    // chartB deve ter um cursorX que corresponde ao valor 50 no seu domínio
+    // (em pixels diferentes, porque as larguras são diferentes)
+    const plotB = chartB['plotRect']();
+    const xPxB = xToPx(50, chartB['gridDomainLeft'], plotB);
+    expect(chartB['cursorX']).toBe(xPxB);
+    expect(chartB['showCrosshair']).toBe(true);
+  });
+
+  it('valor fora do domínio oculta crosshair no target', () => {
+    const chartA = new LineChart(canvasA, { series: [{ name: 'A', color: '#f00' }], autoDraw: false } as any);
+    const chartB = new LineChart(canvasB, { series: [{ name: 'B', color: '#0f0' }], autoDraw: false } as any);
+
+    const x = new Float64Array([0, 50, 100]) as unknown as Float64Array<ArrayBufferLike>;
+    const y = new Float64Array([0, 100, 50]) as unknown as Float64Array<ArrayBufferLike>;
+    chartA.setData(0, x, y);
+    chartA.draw();
+    chartB.setData(0, x, y);
+    chartB.draw();
+
+    chartA.sync(chartB);
+    chartA['showCrosshair'] = true;
+
+    // Valor 999 está fora do domínio X [0, 100] do chartA.
+    // injectCursor oculta o crosshair no próprio chart e dispara
+    // notifySyncCrosshairLeave() nos peers.
+    chartA['injectCursor'](999);
+    expect(chartA['showCrosshair']).toBe(false);
+    expect(chartB['showCrosshair']).toBe(false);
+  });
+
+  it('unsync() remove sincronização', () => {
+    const chartA = new LineChart(canvasA, { series: [{ name: 'A', color: '#f00' }], autoDraw: false } as any);
+    const chartB = new LineChart(canvasB, { series: [{ name: 'B', color: '#0f0' }], autoDraw: false } as any);
+
+    chartA.sync(chartB);
+    expect(chartA['syncTargets'].has(chartB)).toBe(true);
+    expect(chartB['syncTargets'].has(chartA)).toBe(true);
+
+    chartA.unsync(chartB);
+    expect(chartA['syncTargets'].has(chartB)).toBe(false);
+    expect(chartB['syncTargets'].has(chartA)).toBe(false);
+  });
+
+  it('destroy não deixa referência pendente nos peers', () => {
+    const chartA = new LineChart(canvasA, { series: [{ name: 'A', color: '#f00' }], autoDraw: false } as any);
+    const chartB = new LineChart(canvasB, { series: [{ name: 'B', color: '#0f0' }], autoDraw: false } as any);
+
+    chartA.sync(chartB);
+    chartB.destroy();
+
+    // chartA não deve mais ter chartB nos syncTargets
+    expect(chartA['syncTargets'].has(chartB)).toBe(false);
+    expect(chartA['syncTargets'].size).toBe(0);
+  });
+});
+
+describe('Stacking (contrato e validação)', () => {
+  let canvas: HTMLCanvasElement;
+
+  beforeEach(() => {
+    canvas = document.createElement('canvas');
+    canvas.style.cssText = 'width:400px;height:200px';
+    canvas.getBoundingClientRect = () =>
+      ({ width: 400, height: 200, top: 0, left: 0, right: 400, bottom: 200, x: 0, y: 0 }) as DOMRect;
+    document.body.appendChild(canvas);
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    canvas.remove();
+    vi.useRealTimers();
+  });
+
+  it('séries de eixos diferentes com mesmo stack geram aviso', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    new AreaChart(canvas, {
+      series: [
+        { name: 'A', color: '#f00', stack: 'g1' },
+        { name: 'B', color: '#0f0', stack: 'g1', yAxis: 'right' },
+      ],
+      autoDraw: false,
+    } as any);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('mixes axis'));
+    warn.mockRestore();
+  });
+
+  it('séries com count diferente geram aviso no accumulate', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const chart = new AreaChart(canvas, {
+      series: [
+        { name: 'A', color: '#f00', stack: 'g1' },
+        { name: 'B', color: '#0f0', stack: 'g1' },
+      ],
+      autoDraw: false,
+    } as any);
+    const xA = new Float64Array([0, 1]) as unknown as Float64Array<ArrayBufferLike>;
+    const yA = new Float64Array([10, 20]) as unknown as Float64Array<ArrayBufferLike>;
+    const xB = new Float64Array([0, 1, 2]) as unknown as Float64Array<ArrayBufferLike>;
+    const yB = new Float64Array([5, 10, 15]) as unknown as Float64Array<ArrayBufferLike>;
+    chart.setData(0, xA, yA);
+    chart.setData(1, xB, yB);
+    chart.draw();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('skipped series'));
+    warn.mockRestore();
+  });
+
+  it('positivos e negativos são acumulados separadamente', () => {
+    const chart = new AreaChart(canvas, {
+      series: [
+        { name: 'A', color: '#f00', stack: 'g1' },
+        { name: 'B', color: '#0f0', stack: 'g1' },
+      ],
+      autoDraw: false,
+    } as any);
+    // Série A: positiva; Série B: negativa
+    const x = new Float64Array([0, 1]) as unknown as Float64Array<ArrayBufferLike>;
+    const yA = new Float64Array([10, 20]) as unknown as Float64Array<ArrayBufferLike>;
+    const yB = new Float64Array([-5, -8]) as unknown as Float64Array<ArrayBufferLike>;
+    chart.setData(0, x, yA);
+    chart.setData(1, x, yB);
+    chart.draw();
+
+    // A acumulação deve manter separados: posCum = [10, 20], negCum = [-5, -8]
+    const { posCum, negCum } = chart['accumulateStackGroup']([0, 1]);
+    expect(posCum).not.toBeNull();
+    expect(negCum).not.toBeNull();
+    expect(Array.from(posCum!)).toEqual([10, 20]);
+    expect(Array.from(negCum!)).toEqual([-5, -8]);
+  });
+
+  it('mesmo eixo empilha sem aviso', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    new AreaChart(canvas, {
+      series: [
+        { name: 'A', color: '#f00', stack: 'g1' },
+        { name: 'B', color: '#0f0', stack: 'g1' },
+      ],
+      autoDraw: false,
+    } as any);
+    // Reseta chamadas acumuladas durante a construção (pode haver warnings
+    // de outras fontes como matchMedia mock) e verifica que não há aviso
+    // relacionado a stacking.
+    warn.mockClear();
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('stack'));
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('mixes axis'));
+    warn.mockRestore();
+  });
+});
+
+describe('Métricas (windowPointCount / drawnPointCount)', () => {
+  let canvas: HTMLCanvasElement;
+
+  beforeEach(() => {
+    canvas = document.createElement('canvas');
+    canvas.style.cssText = 'width:400px;height:200px';
+    canvas.getBoundingClientRect = () =>
+      ({ width: 400, height: 200, top: 0, left: 0, right: 400, bottom: 200, x: 0, y: 0 }) as DOMRect;
+    document.body.appendChild(canvas);
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    canvas.remove();
+    vi.useRealTimers();
+  });
+
+  it('windowPointCount = soma dos counts', () => {
+    const chart = new LineChart(canvas, { autoDraw: false } as any);
+    const x = new Float64Array([0, 1, 2]) as unknown as Float64Array<ArrayBufferLike>;
+    const y = new Float64Array([10, 20, 30]) as unknown as Float64Array<ArrayBufferLike>;
+    chart.setData(0, x, y);
+    chart.draw();
+    expect(chart.windowPointCount).toBe(3);
+  });
+
+  it('drawnPointCount = windowPointCount para dados esparsos (count <= 2*plotW)', () => {
+    const chart = new LineChart(canvas, { autoDraw: false } as any);
+    // Canvas width = 400, plotW ~= 400 - 56 - 16 = 328; 2*plotW = 656
+    const n = 100;
+    const x = new Float64Array(Array.from({ length: n }, (_, i) => i)) as unknown as Float64Array<ArrayBufferLike>;
+    const y = new Float64Array(Array.from({ length: n }, (_, i) => i * 10)) as unknown as Float64Array<ArrayBufferLike>;
+    chart.setData(0, x, y);
+    chart.draw();
+    expect(chart.drawnPointCount).toBe(100);
+    expect(chart.drawnPointCount).toBe(chart.windowPointCount);
+  });
+
+  it('drawnPointCount << windowPointCount sob decimação (count > 2*plotW)', () => {
+    const chart = new LineChart(canvas, { autoDraw: false } as any);
+    // 10000 pontos em ~328px de largura → decimação ativa
+    const n = 10_000;
+    const x = new Float64Array(Array.from({ length: n }, (_, i) => i)) as unknown as Float64Array<ArrayBufferLike>;
+    const y = new Float64Array(Array.from({ length: n }, (_, i) => i)) as unknown as Float64Array<ArrayBufferLike>;
+    chart.setData(0, x, y);
+    chart.draw();
+    expect(chart.windowPointCount).toBe(10_000);
+    expect(chart.drawnPointCount).toBeLessThan(10_000);
+    // Deve estar próximo de ceil(2 * plotW)
+    const plotW = chart['plotRect']().w;
+    expect(chart.drawnPointCount).toBe(Math.ceil(plotW * 2));
   });
 });

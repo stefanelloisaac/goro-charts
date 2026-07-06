@@ -5,6 +5,45 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] — 2026-07-06
+
+### Behavior fixes
+
+- **Crosshair sync por valor X, não por pixel.**
+  Gráficos com tamanhos, margens e domínios diferentes agora sincronizam
+  corretamente: o valor de dado é convertido de pixel na origem e de volta
+  a pixel no target via pxToX/xToPx. Valor fora do domínio oculta o
+  crosshair no target. _(minor, behavior fix)_
+- **Stacking separa positivos e negativos.**
+  Positivos acumulam num track ascendente, negativos num track descendente,
+  sem se cancelarem. Em desenvolvimento, séries do mesmo `stack` com eixos
+  ou comprimentos divergentes geram aviso descritivo. _(minor, behavior fix)_
+- **`renderedPointCount` renomeado para `windowPointCount`.**
+  A métrica antiga mentia: retornava o total de pontos na janela, não os
+  efetivamente desenhados (o renderer decima para ~2·plotW colunas no
+  regime denso). Agora há duas métricas honestas: `windowPointCount`
+  (volume de dados) e `drawnPointCount` (estimativa pós-decimação).
+  Quem usava `renderedPointCount` deve migrar para `windowPointCount`.
+  _(minor, behavior fix)_
+
+### Added
+
+- `unsync(other)` — remove sincronização bidirecional de crosshair.
+- `drawnPointCount` — estimativa de segmentos realmente desenhados após
+  decimação (útil para verificar que a decimação está ativa).
+- Stacking: validação de alinhamento entre séries do mesmo grupo (eixo e
+  comprimento) em desenvolvimento.
+
+### Changed
+
+- `injectCursor` (privado) agora recebe valor X em vez de pixel — alinhado
+  com a sincronização por valor. `notifySyncCrosshair` envia valor em vez
+  de coordenada de tela.
+- `destroy` agora remove o chart de todos os peers sincronizados antes de
+  limpar as stores.
+- `accumulateStackGroup` retorna `{ posCum, negCum }` separados em vez de
+  uma única acumulação líquida.
+
 ## [1.1.0] — 2026-07-06
 
 ### Behavior fixes

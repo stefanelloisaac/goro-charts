@@ -27,7 +27,7 @@ import { renderCrosshair, computeHits } from '../render/crosshair.ts';
 import { renderLegend } from '../render/legend.ts';
 import { renderStackedBands } from '../render/stacked-band.ts';
 import { formatNumber } from '../math/format.ts';
-import { xToPx } from '../math/scale.ts';
+import { pxToX, xToPx } from '../math/scale.ts';
 import type { ChartOpts, ResolvedOpts, SeriesConfig, SeriesView, PlotRect, Domain } from '../types.ts';
 import type { SeriesHit } from '../render/crosshair.ts';
 
@@ -102,6 +102,7 @@ export abstract class ChartBase {
       left: this.computeStackGroupsOnAxis('left'),
       right: this.computeStackGroupsOnAxis('right'),
     };
+    this.validateStackGroups();
 
     if (opts?.maxPoints != null && opts.maxPoints > 0) {
       for (const s of this.stores) s.initRing(opts.maxPoints);
@@ -301,9 +302,8 @@ export abstract class ChartBase {
 
   /** Reusable crosshair-sync helpers used by both mouse and keyboard handlers. */
   private notifySyncCrosshair(): void {
-    const rect = this.surface.canvas.getBoundingClientRect();
-    const clientX = rect.left + this.cursorX;
-    for (const target of this.syncTargets) target.injectCursor(clientX);
+    const xVal = pxToX(this.cursorX, this.gridDomainLeft, this.plotRect());
+    for (const target of this.syncTargets) target.injectCursor(xVal);
   }
 
   private notifySyncCrosshairLeave(): void {
@@ -388,12 +388,31 @@ export abstract class ChartBase {
   }
 
   /**
-   * Total points rendered across all series in the last draw.
-   * Useful for debug/performance monitoring (e.g. to verify decimation is active).
+   * Total points currently in the window across all series (before decimation).
+   * Useful as a high-level data-volume indicator.
    */
-  get renderedPointCount(): number {
+  get windowPointCount(): number {
     if (this.destroyed) return 0;
     return this.stores.reduce((sum, s) => sum + s.count, 0);
+  }
+
+  /**
+   * Estimated number of line segments actually drawn in the last render.
+   * When a series has more than 2×plotW points, the renderer decimates to
+   * ~2·plotW per-pixel-column segments (the `dense` regime). This property
+   * mirrors that rule so you can verify decimation is active.
+   *
+   * Returns an upper bound (the real hardware draw count may be slightly
+   * lower due to degenerate columns) — sufficient for debug/monitoring.
+   */
+  get drawnPointCount(): number {
+    if (this.destroyed) return 0;
+    const plotW = this.plotRect().w;
+    if (plotW <= 0) return this.windowPointCount;
+    return this.stores.reduce((sum, s) => {
+      if (s.count === 0) return sum;
+      return sum + (s.count > plotW * 2 ? Math.min(s.count, Math.ceil(plotW * 2)) : s.count);
+    }, 0);
   }
 
   /**
@@ -467,6 +486,17 @@ export abstract class ChartBase {
   }
 
   /**
+   * Remove bidirectional crosshair sync previously established with `other`.
+   * No-op if the two charts were not synced.
+   * @param other - Another chart instance to unsync from
+   */
+  unsync(other: ChartBase): void {
+    if (this.destroyed) return;
+    this.syncTargets.delete(other);
+    other.syncTargets.delete(this);
+  }
+
+  /**
    * External callback for hover events. Called on `mousemove` with the
    * interpolated data for every visible series. Use to build custom DOM
    * tooltips or bind to framework state — the Canvas tooltip still draws
@@ -503,10 +533,13 @@ export abstract class ChartBase {
       const stackedSurrogates = new Map<number, Float64Array>();
       for (const [, grp] of stackGroups) {
         if (grp.length < 2) continue;
-        const cum = this.accumulateStackGroup(grp);
-        if (!cum) continue;
+        const { posCum, negCum } = this.accumulateStackGroup(grp);
+        if (!posCum && !negCum) continue;
+        // Combine positive and negative tracks so the crosshair dot sits on
+        // the net band edge (top of positive envelope plus negative dip).
+        const combined = posCum && negCum ? posCum.map((v, i) => v + negCum[i]) : (posCum ?? negCum)!;
         for (const idx of grp) {
-          stackedSurrogates.set(idx, new Float64Array(cum));
+          stackedSurrogates.set(idx, new Float64Array(combined));
         }
       }
 
@@ -571,6 +604,9 @@ export abstract class ChartBase {
     this.surface.canvas.removeEventListener('keydown', this.handleKeyDown);
     this.liveRegion?.remove();
     this.liveRegion = null;
+    // Remove this chart from every peer's sync set to avoid dangling refs.
+    for (const target of this.syncTargets) target.syncTargets.delete(this);
+    this.syncTargets.clear();
     this.surface.dispose();
     this.stores = [];
   }
@@ -747,27 +783,91 @@ export abstract class ChartBase {
   }
 
   /**
-   * Compute accumulated Y values across a stack group.
-   * Returns the cumulative Y array (length = n), or null if all stores are empty.
+   * Validate that all series within each stack group share the same axis and
+   * data length. Warns in development — mixed-axis stacking produces
+   * incorrect visual output.
    */
-  private accumulateStackGroup(indices: number[]): Float64Array | null {
+  private validateStackGroups(): void {
+    for (let i = 0; i < this.stores.length; i++) {
+      const g = this.seriesConfigs[i].stack;
+      if (!g) continue;
+      for (let j = i + 1; j < this.stores.length; j++) {
+        if (this.seriesConfigs[j].stack !== g) continue;
+        // Same group — check axis alignment.
+        const axisI = this.seriesConfigs[i].yAxis ?? 'left';
+        const axisJ = this.seriesConfigs[j].yAxis ?? 'left';
+        if (axisI !== axisJ) {
+          console.warn(
+            `[goro-charts] stack group "${g}" mixes axis ${axisI} (series ${i}) and ${axisJ} (series ${j}). ` +
+              `All series in a stack group must share the same yAxis.`,
+          );
+        }
+        // Check data-length alignment (only when stores are populated).
+        if (this.stores[i].count > 0 && this.stores[j].count > 0 && this.stores[i].count !== this.stores[j].count) {
+          console.warn(
+            `[goro-charts] stack group "${g}" series ${i} (count=${this.stores[i].count}) and ` +
+              `series ${j} (count=${this.stores[j].count}) have different lengths. Stacking may be misaligned.`,
+          );
+        }
+      }
+    }
+  }
+
+  /**
+   * Compute accumulated Y values across a stack group, separating positive
+   * and negative contributions.
+   *
+   * Positive values accumulate upward from 0 (`posCum`); negative values
+   * accumulate downward from 0 (`negCum`). This prevents positive and negative
+   * series from cancelling each other in the same accumulation track.
+   *
+   * Returns `{ posCum, negCum }` where each is `null` when no value of that
+   * sign exists, or the cumulative `Float64Array` (length = n).
+   */
+  private accumulateStackGroup(indices: number[]): { posCum: Float64Array | null; negCum: Float64Array | null } {
     const first = this.stores[indices[0]];
     const n = first.count;
-    if (n === 0) return null;
-    const running = new Float64Array(n);
+    if (n === 0) return { posCum: null, negCum: null };
+
+    // Also validate data-length alignment at runtime.
+    for (const idx of indices) {
+      if (this.stores[idx].count !== n && this.stores[idx].count > 0) {
+        console.warn(
+          `[goro-charts] stack accumulation skipped series ${idx}: count=${this.stores[idx].count} ` +
+            `doesn't match group length ${n}.`,
+        );
+      }
+    }
+
+    const runningPos = new Float64Array(n);
+    const runningNeg = new Float64Array(n);
+    let hasPos = false;
+    let hasNeg = false;
+
     for (const idx of indices) {
       const s = this.stores[idx];
+      if (s.count !== n) continue; // skip misaligned series
       let p = s.head;
       let toWrap = s.cap - s.head;
       for (let j = 0; j < n; j++) {
-        running[j] += s.yArr[p];
+        const v = s.yArr[p];
+        if (v > 0) {
+          runningPos[j] += v;
+          hasPos = true;
+        } else if (v < 0) {
+          runningNeg[j] += v;
+          hasNeg = true;
+        }
         if (--toWrap === 0) {
           p = 0;
           toWrap = s.cap;
         } else p++;
       }
     }
-    return running;
+    return {
+      posCum: hasPos ? runningPos : null,
+      negCum: hasNeg ? runningNeg : null,
+    };
   }
 
   /**
@@ -851,8 +951,8 @@ export abstract class ChartBase {
     // Stacked groups: compute extent from accumulated Y.
     for (const [, grp] of groups) {
       if (grp.length < 2) continue;
-      const cum = this.accumulateStackGroup(grp);
-      if (!cum) continue;
+      const { posCum, negCum } = this.accumulateStackGroup(grp);
+      if (!posCum && !negCum) continue;
       let yMin = Infinity;
       let yMax = -Infinity;
       // Also collect x extents from the group
@@ -861,10 +961,14 @@ export abstract class ChartBase {
         if (s.xMin < d.xMin) d.xMin = s.xMin;
         if (s.xMax > d.xMax) d.xMax = s.xMax;
       }
-      for (let j = 0; j < cum.length; j++) {
-        if (cum[j] < yMin) yMin = cum[j];
-        if (cum[j] > yMax) yMax = cum[j];
-      }
+      const scan = (arr: Float64Array) => {
+        for (let j = 0; j < arr.length; j++) {
+          if (arr[j] < yMin) yMin = arr[j];
+          if (arr[j] > yMax) yMax = arr[j];
+        }
+      };
+      if (posCum) scan(posCum);
+      if (negCum) scan(negCum);
       if (yMin < d.yMin) d.yMin = yMin;
       if (yMax > d.yMax) d.yMax = yMax;
     }
@@ -897,14 +1001,18 @@ export abstract class ChartBase {
     // Stacked groups: expand if accumulated Y exceeds domain.
     for (const [, grp] of groups) {
       if (grp.length < 2) continue;
-      const cum = this.accumulateStackGroup(grp);
-      if (!cum) continue;
+      const { posCum, negCum } = this.accumulateStackGroup(grp);
+      if (!posCum && !negCum) continue;
       let accMin = Infinity;
       let accMax = -Infinity;
-      for (let j = 0; j < cum.length; j++) {
-        if (cum[j] < accMin) accMin = cum[j];
-        if (cum[j] > accMax) accMax = cum[j];
-      }
+      const scan = (arr: Float64Array) => {
+        for (let j = 0; j < arr.length; j++) {
+          if (arr[j] < accMin) accMin = arr[j];
+          if (arr[j] > accMax) accMax = arr[j];
+        }
+      };
+      if (posCum) scan(posCum);
+      if (negCum) scan(negCum);
       if (accMin < d.yMin) {
         d.yMin = accMin - yr * 0.1;
         changed = true;
@@ -992,9 +1100,13 @@ export abstract class ChartBase {
     return s;
   }
 
-  private injectCursor(clientX: number): void {
-    const rect = this.surface.canvas.getBoundingClientRect();
-    this.cursorX = clientX - rect.left;
+  private injectCursor(xVal: number): void {
+    const dom = this.gridDomainLeft;
+    if (xVal < dom.xMin || xVal > dom.xMax) {
+      this.injectCursorLeave();
+      return;
+    }
+    this.cursorX = xToPx(xVal, dom, this.plotRect());
     this.showCrosshair = true;
     this.draw();
   }
