@@ -51,6 +51,12 @@ export abstract class ChartBase {
   private stackGroupsAll!: { groups: Map<string, number[]>; stacked: Set<number> };
   private stackGroupsByAxis!: Record<'left' | 'right', { groups: Map<string, number[]>; stacked: Set<number> }>;
 
+  /**
+   * Tracks stack-misalignment warnings already emitted, so a misaligned group
+   * warns once instead of on every frame (accumulateStackGroup runs per draw).
+   */
+  private stackWarned = new Set<string>();
+
   private dirty = false;
   private cursorX = -1;
   private cursorY = -1;
@@ -378,6 +384,7 @@ export abstract class ChartBase {
     if (this.destroyed) return;
     for (const s of this.stores) s.clear();
     this.gridPinned = false;
+    this.stackWarned.clear();
     this.invalidate();
   }
 
@@ -783,9 +790,11 @@ export abstract class ChartBase {
   }
 
   /**
-   * Validate that all series within each stack group share the same axis and
-   * data length. Warns in development — mixed-axis stacking produces
-   * incorrect visual output.
+   * Validate that all series within each stack group share the same axis.
+   * Runs once in the constructor — axis assignment is immutable after that.
+   * Data-length alignment is validated separately at draw time in
+   * {@link accumulateStackGroup}, since counts change as data arrives.
+   * Warns in development — mixed-axis stacking produces incorrect output.
    */
   private validateStackGroups(): void {
     for (let i = 0; i < this.stores.length; i++) {
@@ -793,20 +802,12 @@ export abstract class ChartBase {
       if (!g) continue;
       for (let j = i + 1; j < this.stores.length; j++) {
         if (this.seriesConfigs[j].stack !== g) continue;
-        // Same group — check axis alignment.
         const axisI = this.seriesConfigs[i].yAxis ?? 'left';
         const axisJ = this.seriesConfigs[j].yAxis ?? 'left';
         if (axisI !== axisJ) {
           console.warn(
             `[goro-charts] stack group "${g}" mixes axis ${axisI} (series ${i}) and ${axisJ} (series ${j}). ` +
               `All series in a stack group must share the same yAxis.`,
-          );
-        }
-        // Check data-length alignment (only when stores are populated).
-        if (this.stores[i].count > 0 && this.stores[j].count > 0 && this.stores[i].count !== this.stores[j].count) {
-          console.warn(
-            `[goro-charts] stack group "${g}" series ${i} (count=${this.stores[i].count}) and ` +
-              `series ${j} (count=${this.stores[j].count}) have different lengths. Stacking may be misaligned.`,
           );
         }
       }
@@ -829,13 +830,18 @@ export abstract class ChartBase {
     const n = first.count;
     if (n === 0) return { posCum: null, negCum: null };
 
-    // Also validate data-length alignment at runtime.
+    // Validate data-length alignment at runtime. accumulateStackGroup runs
+    // multiple times per draw, so warn once per (group, series) pair.
     for (const idx of indices) {
       if (this.stores[idx].count !== n && this.stores[idx].count > 0) {
-        console.warn(
-          `[goro-charts] stack accumulation skipped series ${idx}: count=${this.stores[idx].count} ` +
-            `doesn't match group length ${n}.`,
-        );
+        const key = `len:${indices.join(',')}:${idx}:${this.stores[idx].count}:${n}`;
+        if (!this.stackWarned.has(key)) {
+          this.stackWarned.add(key);
+          console.warn(
+            `[goro-charts] stack accumulation skipped series ${idx}: count=${this.stores[idx].count} ` +
+              `doesn't match group length ${n}.`,
+          );
+        }
       }
     }
 

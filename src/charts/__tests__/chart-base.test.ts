@@ -559,6 +559,33 @@ describe('Stacking (contrato e validação)', () => {
     warn.mockRestore();
   });
 
+  it('aviso de count desalinhado não repete a cada draw', () => {
+    const chart = new AreaChart(canvas, {
+      series: [
+        { name: 'A', color: '#f00', stack: 'g1' },
+        { name: 'B', color: '#0f0', stack: 'g1' },
+      ],
+      autoDraw: false,
+    } as any);
+    const xA = new Float64Array([0, 1]) as unknown as Float64Array<ArrayBufferLike>;
+    const yA = new Float64Array([10, 20]) as unknown as Float64Array<ArrayBufferLike>;
+    const xB = new Float64Array([0, 1, 2]) as unknown as Float64Array<ArrayBufferLike>;
+    const yB = new Float64Array([5, 10, 15]) as unknown as Float64Array<ArrayBufferLike>;
+    chart.setData(0, xA, yA);
+    chart.setData(1, xB, yB);
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    chart.draw();
+    chart['dirty'] = true;
+    chart.draw();
+    chart['dirty'] = true;
+    chart.draw();
+    // Apesar de 3 draws, o aviso de desalinhamento aparece uma única vez.
+    const skipCalls = warn.mock.calls.filter((c) => String(c[0]).includes('skipped series'));
+    expect(skipCalls.length).toBe(1);
+    warn.mockRestore();
+  });
+
   it('positivos e negativos são acumulados separadamente', () => {
     const chart = new AreaChart(canvas, {
       series: [
