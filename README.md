@@ -402,9 +402,7 @@ tooltips, update framework state, or pipe values into external widgets.
 
 ```ts
 chart.onHover = (hits) => {
-  myTooltipEl.innerHTML = hits
-    .map((h) => `${h.label}: ${h.yVal.toFixed(1)}`)
-    .join('<br>');
+  myTooltipEl.innerHTML = hits.map((h) => `${h.label}: ${h.yVal.toFixed(1)}`).join('<br>');
 };
 ```
 
@@ -454,6 +452,7 @@ outside the canvas.
 ## Troubleshooting
 
 ### Canvas is blank / black
+
 - Ensure the canvas element has non-zero CSS width and height.
 - Check that `chart.draw()` is being called after `setData()` (or enable
   `autoDraw` for streaming mode).
@@ -462,23 +461,27 @@ outside the canvas.
   visible.
 
 ### "Canvas 2D context not available"
+
 - This error means `canvas.getContext('2d')` returned `null`. Common causes:
   - The canvas element does not exist in the DOM at construction time.
   - The canvas was already claimed by a WebGL context.
   - You are running in a server-side environment (Node.js without `node-canvas`).
 
 ### "append() requires the chart to be created with { maxPoints }"
+
 - Streaming methods (`append`, `appendBatch`) require ring mode, which is
   activated by passing `maxPoints` (a positive number) to the constructor.
 - Use `setData()` for snapshot mode (full replacement).
 
 ### Crosshair does not appear
+
 - The crosshair only shows when the mouse is inside the plot area (the inner
   rectangle after padding is applied).
 - Check that `onHover` or mouse events are not being consumed by an overlay
   element above the canvas.
 
 ### Performance is slow with many points
+
 - Verify that decimation is working: the line/area renderers auto-switch to
   per-pixel-column decimation when `count > 2 × plotWidth`.
 - For scatter charts, reduce `maxDots` (default 2000) or set it to a lower

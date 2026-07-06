@@ -34,20 +34,48 @@ interface SetupState {
     const ctx = {
       canvas: this,
 
-      get font() { return state.font; },
-      set font(v: string) { state.font = v; },
-      get strokeStyle() { return state.strokeStyle; },
-      set strokeStyle(v: any) { state.strokeStyle = String(v); },
-      get fillStyle() { return state.fillStyle; },
-      set fillStyle(v: any) { state.fillStyle = String(v); },
-      get lineWidth() { return state.lineWidth; },
-      set lineWidth(v: number) { state.lineWidth = v; },
-      get globalAlpha() { return state.globalAlpha; },
-      set globalAlpha(v: number) { state.globalAlpha = v; },
-      get textAlign() { return state.textAlign; },
-      set textAlign(v: CanvasTextAlign) { state.textAlign = v; },
-      get textBaseline() { return state.textBaseline; },
-      set textBaseline(v: CanvasTextBaseline) { state.textBaseline = v; },
+      get font() {
+        return state.font;
+      },
+      set font(v: string) {
+        state.font = v;
+      },
+      get strokeStyle() {
+        return state.strokeStyle;
+      },
+      set strokeStyle(v: any) {
+        state.strokeStyle = String(v);
+      },
+      get fillStyle() {
+        return state.fillStyle;
+      },
+      set fillStyle(v: any) {
+        state.fillStyle = String(v);
+      },
+      get lineWidth() {
+        return state.lineWidth;
+      },
+      set lineWidth(v: number) {
+        state.lineWidth = v;
+      },
+      get globalAlpha() {
+        return state.globalAlpha;
+      },
+      set globalAlpha(v: number) {
+        state.globalAlpha = v;
+      },
+      get textAlign() {
+        return state.textAlign;
+      },
+      set textAlign(v: CanvasTextAlign) {
+        state.textAlign = v;
+      },
+      get textBaseline() {
+        return state.textBaseline;
+      },
+      set textBaseline(v: CanvasTextBaseline) {
+        state.textBaseline = v;
+      },
 
       beginPath: vi.fn(),
       stroke: vi.fn(),
@@ -59,8 +87,12 @@ interface SetupState {
       strokeRect: vi.fn(),
       fillText: vi.fn(),
       measureText: vi.fn(() => ({ width: 28, actualBoundingBoxAscent: 9, actualBoundingBoxDescent: 2 })),
-      setLineDash: vi.fn(function (this: any, segments: number[]) { state.lineDash = segments; }),
-      getLineDash: vi.fn(function () { return state.lineDash; }),
+      setLineDash: vi.fn(function (this: any, segments: number[]) {
+        state.lineDash = segments;
+      }),
+      getLineDash: vi.fn(function () {
+        return state.lineDash;
+      }),
       save: vi.fn(),
       restore: vi.fn(),
       translate: vi.fn(),

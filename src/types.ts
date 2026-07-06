@@ -81,12 +81,14 @@ export interface ChartOpts {
   autoDraw?: boolean;
   /**
    * Fixed Y-axis lower bound. When set the grid domain is pinned to this
-   * value instead of auto-expanding from data. Pair with {@link yMax}.
+   * value instead of auto-expanding from data. `undefined` (default) = auto.
+   * Pair with {@link yMax}.
    */
   yMin?: number;
   /**
    * Fixed Y-axis upper bound. When set the grid domain is pinned to this
-   * value instead of auto-expanding from data. Pair with {@link yMin}.
+   * value instead of auto-expanding from data. `undefined` (default) = auto.
+   * Pair with {@link yMin}.
    */
   yMax?: number;
   /**
@@ -96,8 +98,14 @@ export interface ChartOpts {
   maxDots?: number;
 }
 
-/** Fully-resolved options (every field present). */
-export type ResolvedOpts = Required<ChartOpts>;
+/** Fully-resolved options (every field present).
+ *
+ * `yMin` and `yMax` are `number | undefined` because `undefined` is the
+ * sentinel for "auto" domain — `0` is a legitimate fixed bound. */
+export type ResolvedOpts = Required<Omit<ChartOpts, 'yMin' | 'yMax'>> & {
+  yMin: number | undefined;
+  yMax: number | undefined;
+};
 
 /** Plot area rectangle in CSS pixels, padding already applied. */
 export interface PlotRect {

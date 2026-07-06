@@ -5,6 +5,31 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] — 2026-07-06
+
+### Behavior fixes
+
+- **`yMin`/`yMax` sentinel: `0` agora é um bound legítimo.**
+  Antes `yMin: 0` e `yMax: 0` eram tratados como "auto" (descartados). Agora só
+  caem em domínio automático quando `undefined`. `yMin: 0` ancorado é o caso mais
+  comum e finalmente funciona. _(minor, behavior fix)_
+- **Teclado: navegação por ponto de dado, não por pixel.**
+  As setas movem o crosshair de ponto em ponto (lógico) da primeira série
+  não-vazia. `Shift+seta` avança 10 pontos. Antes navegava por pixel, sem
+  ancorar em dados reais. _(minor, behavior fix)_
+- **`prefers-reduced-motion` não para mais o streaming.**
+  Antes desligava `autoDraw`, interrompendo o repaint coalescido de dados ao
+  vivo. Agora só sinaliza uma flag para suprimir animações visuais (quando
+  houverem) sem afetar a atualização contínua do gráfico. _(minor, behavior fix)_
+
+### Changed
+
+- `ResolvedOpts.yMin` / `ResolvedOpts.yMax` agora são `number | undefined`.
+  O sentinela "auto" mudou de `0` para `undefined`. Código que dependia do
+  comportamento antigo (ex.: checagens `yMin !== 0`) deve usar `yMin !== undefined`.
+- `prefers-reduced-motion` adiciona listener `change` em runtime para reavaliar
+  a preferência sem recriar o gráfico. O listener é removido em `destroy()`.
+
 ## [1.0.0]
 
 Initial stable release.

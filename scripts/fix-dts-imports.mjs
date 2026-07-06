@@ -14,8 +14,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const dist = join(fileURLToPath(import.meta.url), '..', '..', 'dist');
-const files = readdirSync(dist, { recursive: true })
-  .filter((f) => typeof f === 'string' && f.endsWith('.d.ts'));
+const files = readdirSync(dist, { recursive: true }).filter((f) => typeof f === 'string' && f.endsWith('.d.ts'));
 
 for (const f of files) {
   const p = join(dist, f);

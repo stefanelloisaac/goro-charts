@@ -2,14 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { computeHits, renderCrosshair } from '../crosshair';
 import { createMockCtx } from './ctx-mock';
 
-function makeView(
-  xs: number[],
-  ys: number[],
-  yMin: number,
-  yMax: number,
-  xMin?: number,
-  xMax?: number,
-) {
+function makeView(xs: number[], ys: number[], yMin: number, yMax: number, xMin?: number, xMax?: number) {
   const xArr = new Float64Array(xs) as unknown as Float64Array<ArrayBufferLike>;
   const yArr = new Float64Array(ys) as unknown as Float64Array<ArrayBufferLike>;
   return {
@@ -79,17 +72,17 @@ describe('computeHits', () => {
     // force count=0
     Object.defineProperty(vazia, 'count', { value: 0 });
     const views = [vazia, makeView([0, 100], [0, 100], 0, 100)];
-    const configs: any = [{ name: 'Vazia', color: '#000' }, { name: 'S1', color: '#f00' }];
+    const configs: any = [
+      { name: 'Vazia', color: '#000' },
+      { name: 'S1', color: '#f00' },
+    ];
     const hits = computeHits(views, configs, plot, 250);
     expect(hits.length).toBe(1);
     expect(hits[0].label).toBe('S1');
   });
 
   it('múltiplas séries', () => {
-    const views = [
-      makeView([0, 100], [0, 100], 0, 100),
-      makeView([0, 100], [100, 0], 0, 100),
-    ];
+    const views = [makeView([0, 100], [0, 100], 0, 100), makeView([0, 100], [100, 0], 0, 100)];
     const configs: any = [
       { name: 'S1', color: '#f00' },
       { name: 'S2', color: '#0f0' },
@@ -138,10 +131,7 @@ describe('renderCrosshair', () => {
 
   it('múltiplas séries: sem guia horizontal, um dot por série', () => {
     const mc = createMockCtx();
-    const views = [
-      makeView([0, 100], [0, 100], 0, 100),
-      makeView([0, 100], [100, 0], 0, 100),
-    ];
+    const views = [makeView([0, 100], [0, 100], 0, 100), makeView([0, 100], [100, 0], 0, 100)];
     const configs: any = [
       { name: 'A', color: '#f00' },
       { name: 'B', color: '#0f0' },

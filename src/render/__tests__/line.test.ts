@@ -2,14 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createMockCtx } from './ctx-mock';
 import { renderLine } from '../line';
 
-function makeView(
-  xs: number[],
-  ys: number[],
-  yMin = 0,
-  yMax = 100,
-  xMin?: number,
-  xMax?: number,
-) {
+function makeView(xs: number[], ys: number[], yMin = 0, yMax = 100, xMin?: number, xMax?: number) {
   const xArr = new Float64Array(xs) as unknown as Float64Array<ArrayBufferLike>;
   const yArr = new Float64Array(ys) as unknown as Float64Array<ArrayBufferLike>;
   return {
@@ -24,7 +17,8 @@ function makeView(
     yMax,
     physOf: (i: number) => i,
     bracketLogical: (t: number) => {
-      let lo = 0, hi = xs.length - 1;
+      let lo = 0,
+        hi = xs.length - 1;
       if (t <= xs[0]) return 0;
       if (t >= xs[hi]) return hi;
       while (lo < hi) {

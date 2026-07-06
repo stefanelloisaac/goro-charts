@@ -58,32 +58,82 @@ export function createMockCtx(): CanvasRenderingContext2D & { calls: MockCtxCall
 
     canvas: {} as HTMLCanvasElement,
 
-    get font() { return state.font; },
-    set font(v: string) { state.font = v; },
-    get strokeStyle() { return state.strokeStyle; },
-    set strokeStyle(v: string | CanvasGradient | CanvasPattern) { state.strokeStyle = String(v); },
-    get fillStyle() { return state.fillStyle; },
-    set fillStyle(v: string | CanvasGradient | CanvasPattern) { state.fillStyle = String(v); },
-    get lineWidth() { return state.lineWidth; },
-    set lineWidth(v: number) { state.lineWidth = v; },
-    get globalAlpha() { return state.globalAlpha; },
-    set globalAlpha(v: number) { state.globalAlpha = v; },
-    get textAlign() { return state.textAlign; },
-    set textAlign(v: CanvasTextAlign) { state.textAlign = v; },
-    get textBaseline() { return state.textBaseline; },
-    set textBaseline(v: CanvasTextBaseline) { state.textBaseline = v; },
+    get font() {
+      return state.font;
+    },
+    set font(v: string) {
+      state.font = v;
+    },
+    get strokeStyle() {
+      return state.strokeStyle;
+    },
+    set strokeStyle(v: string | CanvasGradient | CanvasPattern) {
+      state.strokeStyle = String(v);
+    },
+    get fillStyle() {
+      return state.fillStyle;
+    },
+    set fillStyle(v: string | CanvasGradient | CanvasPattern) {
+      state.fillStyle = String(v);
+    },
+    get lineWidth() {
+      return state.lineWidth;
+    },
+    set lineWidth(v: number) {
+      state.lineWidth = v;
+    },
+    get globalAlpha() {
+      return state.globalAlpha;
+    },
+    set globalAlpha(v: number) {
+      state.globalAlpha = v;
+    },
+    get textAlign() {
+      return state.textAlign;
+    },
+    set textAlign(v: CanvasTextAlign) {
+      state.textAlign = v;
+    },
+    get textBaseline() {
+      return state.textBaseline;
+    },
+    set textBaseline(v: CanvasTextBaseline) {
+      state.textBaseline = v;
+    },
 
-    beginPath() { calls.beginPath++; },
-    stroke() { calls.stroke++; },
-    fill() { calls.fill++; },
-    closePath() { calls.closePath++; },
-    moveTo(x: number, y: number) { calls.moveTo.push([x, y]); },
-    lineTo(x: number, y: number) { calls.lineTo.push([x, y]); },
-    arc(x: number, y: number, r: number, sa: number, ea: number) { calls.arc.push([x, y, r, sa, ea]); },
-    strokeRect(x: number, y: number, w: number, h: number) { calls.strokeRect.push([x, y, w, h]); },
-    fillText(text: string, x: number, y: number) { calls.fillText.push([text, x, y]); },
-    setLineDash(segments: number[]) { state.lineDash = segments; },
-    getLineDash() { return state.lineDash; },
+    beginPath() {
+      calls.beginPath++;
+    },
+    stroke() {
+      calls.stroke++;
+    },
+    fill() {
+      calls.fill++;
+    },
+    closePath() {
+      calls.closePath++;
+    },
+    moveTo(x: number, y: number) {
+      calls.moveTo.push([x, y]);
+    },
+    lineTo(x: number, y: number) {
+      calls.lineTo.push([x, y]);
+    },
+    arc(x: number, y: number, r: number, sa: number, ea: number) {
+      calls.arc.push([x, y, r, sa, ea]);
+    },
+    strokeRect(x: number, y: number, w: number, h: number) {
+      calls.strokeRect.push([x, y, w, h]);
+    },
+    fillText(text: string, x: number, y: number) {
+      calls.fillText.push([text, x, y]);
+    },
+    setLineDash(segments: number[]) {
+      state.lineDash = segments;
+    },
+    getLineDash() {
+      return state.lineDash;
+    },
     measureText(text: string) {
       calls.measureText.push(text);
       return { width: text.length * 7, actualBoundingBoxAscent: 9, actualBoundingBoxDescent: 2 } as TextMetrics;
@@ -99,18 +149,34 @@ export function createMockCtx(): CanvasRenderingContext2D & { calls: MockCtxCall
     arcTo() {},
     quadraticCurveTo() {},
     bezierCurveTo() {},
-    createLinearGradient() { return { addColorStop() {} } as unknown as CanvasGradient; },
-    createRadialGradient() { return { addColorStop() {} } as unknown as CanvasGradient; },
-    createPattern() { return null; },
+    createLinearGradient() {
+      return { addColorStop() {} } as unknown as CanvasGradient;
+    },
+    createRadialGradient() {
+      return { addColorStop() {} } as unknown as CanvasGradient;
+    },
+    createPattern() {
+      return null;
+    },
     drawImage() {},
     clip() {},
-    isPointInPath() { return false; },
-    isPointInStroke() { return false; },
+    isPointInPath() {
+      return false;
+    },
+    isPointInStroke() {
+      return false;
+    },
     putImageData() {},
-    getImageData() { return { data: new Uint8ClampedArray(0), width: 0, height: 0 } as ImageData; },
-    createImageData() { return { data: new Uint8ClampedArray(0), width: 0, height: 0 } as ImageData; },
+    getImageData() {
+      return { data: new Uint8ClampedArray(0), width: 0, height: 0 } as ImageData;
+    },
+    createImageData() {
+      return { data: new Uint8ClampedArray(0), width: 0, height: 0 } as ImageData;
+    },
     setTransform() {},
-    getTransform() { return { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 } as DOMMatrix; },
+    getTransform() {
+      return { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 } as DOMMatrix;
+    },
     transform() {},
     resetTransform() {},
     drawFocusIfNeeded() {},

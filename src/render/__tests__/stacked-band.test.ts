@@ -37,10 +37,7 @@ describe('renderStackedBands', () => {
 
   it('duas camadas produzem fill + stroke para cada', () => {
     const mc = createMockCtx();
-    const stores = [
-      makeStore([0, 50, 100], [10, 20, 30]),
-      makeStore([0, 50, 100], [5, 10, 15]),
-    ];
+    const stores = [makeStore([0, 50, 100], [10, 20, 30]), makeStore([0, 50, 100], [5, 10, 15])];
     renderStackedBands(mc, stores, styles, plot, domain);
     // Cada camada: fill (beginPath + fill) + stroke (beginPath + stroke)
     expect(mc.calls.beginPath).toBe(4);
@@ -50,10 +47,7 @@ describe('renderStackedBands', () => {
 
   it('usou closePath para fechar as áreas', () => {
     const mc = createMockCtx();
-    const stores = [
-      makeStore([0, 50, 100], [10, 20, 30]),
-      makeStore([0, 50, 100], [5, 10, 15]),
-    ];
+    const stores = [makeStore([0, 50, 100], [10, 20, 30]), makeStore([0, 50, 100], [5, 10, 15])];
     renderStackedBands(mc, stores, styles, plot, domain);
     expect(mc.calls.closePath).toBe(2);
   });
@@ -77,10 +71,7 @@ describe('renderStackedBands', () => {
     const mc = createMockCtx();
     // Domínio yMax=100, mas o topo acumulado (60+60=120) excede — deve ser
     // preso ao topo do plot (plot.y), nunca acima dele.
-    const stores = [
-      makeStore([0, 50, 100], [60, 60, 60]),
-      makeStore([0, 50, 100], [60, 60, 60]),
-    ];
+    const stores = [makeStore([0, 50, 100], [60, 60, 60]), makeStore([0, 50, 100], [60, 60, 60])];
     renderStackedBands(mc, stores, styles, plot, domain);
     const ys = [...mc.calls.moveTo, ...mc.calls.lineTo].map(([, y]) => y);
     const top = plot.y;

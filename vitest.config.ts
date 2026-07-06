@@ -8,7 +8,14 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['src/**'],
-      exclude: ['src/**/*.test.ts', 'src/**/__tests__/**', 'src/__setup.ts', 'src/index.ts', 'src/presets.ts', 'src/types.ts'],
+      exclude: [
+        'src/**/*.test.ts',
+        'src/**/__tests__/**',
+        'src/__setup.ts',
+        'src/index.ts',
+        'src/presets.ts',
+        'src/types.ts',
+      ],
       // Branches sits lower than the others because chart-base.ts holds the
       // DOM interaction orchestration (mouse/resize/rAF, dual-Y, stacking)
       // whose many conditional paths aren't fully driven under happy-dom.

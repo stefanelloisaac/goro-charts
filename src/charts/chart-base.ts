@@ -27,6 +27,7 @@ import { renderCrosshair, computeHits } from '../render/crosshair.ts';
 import { renderLegend } from '../render/legend.ts';
 import { renderStackedBands } from '../render/stacked-band.ts';
 import { formatNumber } from '../math/format.ts';
+import { xToPx } from '../math/scale.ts';
 import type { ChartOpts, ResolvedOpts, SeriesConfig, SeriesView, PlotRect, Domain } from '../types.ts';
 import type { SeriesHit } from '../render/crosshair.ts';
 
@@ -55,6 +56,9 @@ export abstract class ChartBase {
   private cursorY = -1;
   private showCrosshair = false;
 
+  /** Logical index of the keyboard-cursor point in the reference series. */
+  private cursorLogical = -1;
+
   private autoDraw: boolean;
   private rafScheduled = 0;
   private suspendCount = 0;
@@ -63,6 +67,16 @@ export abstract class ChartBase {
   private resizeObserver: ResizeObserver | null = null;
   protected destroyed = false;
   private liveRegion: HTMLElement | null = null;
+  /**
+   * Reference to the `prefers-reduced-motion` MQL plus its change listener.
+   * Check `reducedMotionMql.matches` to test the preference; the listener
+   * triggers a re-draw when the preference changes at runtime.
+   */
+  private reducedMotionMql: MediaQueryList | null = null;
+  private readonly handleReducedMotionChange = () => {
+    // The flag is live via reducedMotionMql.matches — just redraw.
+    this.draw();
+  };
   private readonly handleResize = () => this.onResize();
   private readonly handleMouseMove = (e: MouseEvent) => this.onMouseMove(e);
   private readonly handleMouseLeave = () => this.onMouseLeave();
@@ -93,11 +107,11 @@ export abstract class ChartBase {
       for (const s of this.stores) s.initRing(opts.maxPoints);
     }
 
-    if (this.opts.yMin !== 0 || this.opts.yMax !== 0) {
-      this.gridDomainLeft.yMin = this.opts.yMin;
-      this.gridDomainLeft.yMax = this.opts.yMax;
-      this.gridDomainRight.yMin = this.opts.yMin;
-      this.gridDomainRight.yMax = this.opts.yMax;
+    if (this.opts.yMin !== undefined || this.opts.yMax !== undefined) {
+      if (this.opts.yMin !== undefined) this.gridDomainLeft.yMin = this.opts.yMin;
+      if (this.opts.yMax !== undefined) this.gridDomainLeft.yMax = this.opts.yMax;
+      if (this.opts.yMin !== undefined) this.gridDomainRight.yMin = this.opts.yMin;
+      if (this.opts.yMax !== undefined) this.gridDomainRight.yMax = this.opts.yMax;
       this.gridPinned = true;
     }
 
@@ -124,7 +138,7 @@ export abstract class ChartBase {
       console.warn(`[goro-charts] padding values must be >= 0, got [${pad}]. Clamping to 0.`);
       this.opts.padding = pad.map((p) => Math.max(0, p)) as [number, number, number, number];
     }
-    if (this.opts.yMin > 0 && this.opts.yMax > 0 && this.opts.yMin >= this.opts.yMax) {
+    if (this.opts.yMin !== undefined && this.opts.yMax !== undefined && this.opts.yMin >= this.opts.yMax) {
       console.warn(`[goro-charts] yMin (${this.opts.yMin}) must be < yMax (${this.opts.yMax}). Swapping.`);
       [this.opts.yMin, this.opts.yMax] = [this.opts.yMax, this.opts.yMin];
     }
@@ -144,14 +158,21 @@ export abstract class ChartBase {
 
   /**
    * Detect system accessibility preferences and adjust visual styles.
-   * - prefers-reduced-motion → disable rAF coalescing (synchronous draws)
+   * - prefers-reduced-motion → tracked via `reducedMotionMql.matches`
+   *   (streaming/rAF continue normally; read the flag to suppress future
+   *   transitions/animations)
    * - prefers-contrast: more → increase colour opacity
    * - forced-colors: active → use system CSS system colours
+   *
+   * Also registers a `change` listener on the reduced-motion MQL so the
+   * preference is re-evaluated at runtime. The listener is removed in
+   * {@link destroy}.
    */
   private applySystemTheme(): void {
     try {
       const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-      if (reducedMotion.matches) this.autoDraw = false;
+      this.reducedMotionMql = reducedMotion;
+      reducedMotion.addEventListener('change', this.handleReducedMotionChange);
 
       const highContrast = window.matchMedia('(prefers-contrast: more)');
       if (highContrast.matches) {
@@ -182,7 +203,8 @@ export abstract class ChartBase {
       this.liveRegion = document.createElement('div');
       this.liveRegion.setAttribute('aria-live', 'polite');
       this.liveRegion.setAttribute('aria-atomic', 'true');
-      this.liveRegion.style.cssText = 'position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;';
+      this.liveRegion.style.cssText =
+        'position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;';
       this.surface.canvas.parentElement?.appendChild(this.liveRegion);
     } catch {
       // DOM may not be available in test environments
@@ -202,46 +224,79 @@ export abstract class ChartBase {
     if (nonEmpty.length === 0) {
       label = 'Chart: no data';
     } else {
-      label = `Chart: ${nonEmpty
-        .map((s) => `${s.config.name} ${formatNumber(s.last)}`)
-        .join(', ')}`;
+      label = `Chart: ${nonEmpty.map((s) => `${s.config.name} ${formatNumber(s.last)}`).join(', ')}`;
     }
     this.surface.canvas.setAttribute('aria-label', label);
+  }
+
+  /**
+   * Return the first non-empty series index, or -1 when all stores are empty.
+   * Used as the reference for keyboard navigation — the cursor advances by
+   * logical point indices of this series and the crosshair position is derived
+   * from its X value at the current logical index.
+   */
+  private referenceSeriesIndex(): number {
+    for (let i = 0; i < this.stores.length; i++) {
+      if (this.stores[i].count > 0) return i;
+    }
+    return -1;
   }
 
   /**
    * Handle keyboard navigation for the crosshair.
    * - ArrowLeft / ArrowRight: move crosshair by 1 point (Shift: 10 points)
    * - Escape: hide crosshair
+   *
+   * Navigation is anchored to the logical index of the first non-empty series
+   * (see {@link referenceSeriesIndex}). The pixel position is derived from the
+   * point's X value via the grid domain so the cursor tracks data, not pixels.
    */
   private onKeyDown(e: KeyboardEvent): void {
     if (document.activeElement !== this.surface.canvas) return;
 
     const step = e.shiftKey ? 10 : 1;
-    const plot = this.plotRect();
+    const ref = this.referenceSeriesIndex();
+    if (ref < 0) return;
+
+    const count = this.stores[ref].count;
 
     switch (e.key) {
       case 'ArrowLeft':
         e.preventDefault();
-        this.cursorX = Math.max(plot.x, this.cursorX - step);
-        this.showCrosshair = true;
-        this.draw();
-        this.notifySyncCrosshair();
+        if (this.cursorLogical < 0 || this.cursorLogical >= count) {
+          this.cursorLogical = count - 1;
+        } else {
+          this.cursorLogical = Math.max(0, this.cursorLogical - step);
+        }
         break;
       case 'ArrowRight':
         e.preventDefault();
-        this.cursorX = Math.min(plot.x + plot.w, this.cursorX + step);
-        this.showCrosshair = true;
-        this.draw();
-        this.notifySyncCrosshair();
+        if (this.cursorLogical < 0 || this.cursorLogical >= count) {
+          this.cursorLogical = 0;
+        } else {
+          this.cursorLogical = Math.min(count - 1, this.cursorLogical + step);
+        }
         break;
       case 'Escape':
         e.preventDefault();
         this.showCrosshair = false;
         this.draw();
         this.notifySyncCrosshairLeave();
-        break;
+        return;
+      default:
+        return;
     }
+
+    // Convert the logical point index to a pixel X coordinate.
+    const store = this.stores[ref];
+    const xVal = store.xArr[store.physOf(this.cursorLogical)];
+    const plot = this.plotRect();
+    // Use the grid domain for the reference series axis.
+    const axis = (this.seriesConfigs[ref].yAxis ?? 'left') === 'right' ? this.gridDomainRight : this.gridDomainLeft;
+    this.cursorX = xToPx(xVal, axis, plot);
+    this.showCrosshair = true;
+    this.draw();
+    this.notifySyncCrosshair();
   }
 
   /** Reusable crosshair-sync helpers used by both mouse and keyboard handlers. */
@@ -476,9 +531,8 @@ export abstract class ChartBase {
         const hits = computeHits(crosshairViews, this.seriesConfigs, plot, this.cursorX);
         if (this.onHover && hits.length > 0) this.onHover(hits);
         if (this.liveRegion) {
-          this.liveRegion.textContent = hits.length > 0
-            ? hits.map((h) => `${h.label}: ${formatNumber(h.yVal)}`).join(', ')
-            : '';
+          this.liveRegion.textContent =
+            hits.length > 0 ? hits.map((h) => `${h.label}: ${formatNumber(h.yVal)}`).join(', ') : '';
         }
       }
 
@@ -510,6 +564,8 @@ export abstract class ChartBase {
     }
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
+    this.reducedMotionMql?.removeEventListener('change', this.handleReducedMotionChange);
+    this.reducedMotionMql = null;
     this.surface.canvas.removeEventListener('mousemove', this.handleMouseMove);
     this.surface.canvas.removeEventListener('mouseleave', this.handleMouseLeave);
     this.surface.canvas.removeEventListener('keydown', this.handleKeyDown);
@@ -625,9 +681,7 @@ export abstract class ChartBase {
   }
 
   /** Cached per-axis stack groups (computed once in the constructor). */
-  private detectStackGroupsOnAxis(
-    axis: 'left' | 'right',
-  ): { groups: Map<string, number[]>; stacked: Set<number> } {
+  private detectStackGroupsOnAxis(axis: 'left' | 'right'): { groups: Map<string, number[]>; stacked: Set<number> } {
     return this.stackGroupsByAxis[axis];
   }
 
@@ -635,9 +689,7 @@ export abstract class ChartBase {
    * Compute stack groups for a given axis. Returns the group map and a set
    * of series indices that belong to groups with 2+ members.
    */
-  private computeStackGroupsOnAxis(
-    axis: 'left' | 'right',
-  ): { groups: Map<string, number[]>; stacked: Set<number> } {
+  private computeStackGroupsOnAxis(axis: 'left' | 'right'): { groups: Map<string, number[]>; stacked: Set<number> } {
     const groups = new Map<string, number[]>();
     const stacked = new Set<number>();
     for (let i = 0; i < this.stores.length; i++) {
@@ -645,7 +697,10 @@ export abstract class ChartBase {
       const g = this.seriesConfigs[i].stack;
       if (g) {
         let grp = groups.get(g);
-        if (!grp) { grp = []; groups.set(g, grp); }
+        if (!grp) {
+          grp = [];
+          groups.set(g, grp);
+        }
         grp.push(i);
       }
     }
@@ -678,7 +733,10 @@ export abstract class ChartBase {
       const g = this.seriesConfigs[i].stack;
       if (g) {
         let grp = groups.get(g);
-        if (!grp) { grp = []; groups.set(g, grp); }
+        if (!grp) {
+          grp = [];
+          groups.set(g, grp);
+        }
         grp.push(i);
       }
     }
@@ -703,8 +761,10 @@ export abstract class ChartBase {
       let toWrap = s.cap - s.head;
       for (let j = 0; j < n; j++) {
         running[j] += s.yArr[p];
-        if (--toWrap === 0) { p = 0; toWrap = s.cap; }
-        else p++;
+        if (--toWrap === 0) {
+          p = 0;
+          toWrap = s.cap;
+        } else p++;
       }
     }
     return running;
@@ -732,16 +792,16 @@ export abstract class ChartBase {
 
     const userYMin = this.opts.yMin;
     const userYMax = this.opts.yMax;
-    const fixedY = userYMin !== 0 || userYMax !== 0;
+    const fixedY = userYMin !== undefined || userYMax !== undefined;
     const streaming = this.stores.some((s) => s.isRing);
 
     const applyUserBounds = () => {
       if (!fixedY) return;
-      if (userYMin !== 0) {
+      if (userYMin !== undefined) {
         this.gridDomainLeft.yMin = userYMin;
         this.gridDomainRight.yMin = userYMin;
       }
-      if (userYMax !== 0) {
+      if (userYMax !== undefined) {
         this.gridDomainLeft.yMax = userYMax;
         this.gridDomainRight.yMax = userYMax;
       }
@@ -845,8 +905,14 @@ export abstract class ChartBase {
         if (cum[j] < accMin) accMin = cum[j];
         if (cum[j] > accMax) accMax = cum[j];
       }
-      if (accMin < d.yMin) { d.yMin = accMin - yr * 0.1; changed = true; }
-      if (accMax > d.yMax) { d.yMax = accMax + yr * 0.1; changed = true; }
+      if (accMin < d.yMin) {
+        d.yMin = accMin - yr * 0.1;
+        changed = true;
+      }
+      if (accMax > d.yMax) {
+        d.yMax = accMax + yr * 0.1;
+        changed = true;
+      }
     }
 
     // Non-stacked series on this axis.
@@ -855,8 +921,14 @@ export abstract class ChartBase {
       const s = this.stores[i];
       if (s.count === 0) continue;
       if ((this.seriesConfigs[i].yAxis ?? 'left') !== axis) continue;
-      if (s.yMin < d.yMin) { d.yMin = s.yMin - yr * 0.1; changed = true; }
-      if (s.yMax > d.yMax) { d.yMax = s.yMax + yr * 0.1; changed = true; }
+      if (s.yMin < d.yMin) {
+        d.yMin = s.yMin - yr * 0.1;
+        changed = true;
+      }
+      if (s.yMax > d.yMax) {
+        d.yMax = s.yMax + yr * 0.1;
+        changed = true;
+      }
     }
 
     if (changed) {

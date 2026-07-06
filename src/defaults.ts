@@ -6,8 +6,8 @@
  * is a sentinel meaning "snapshot mode" (no ring); the constructor activates
  * ring mode only when the user passes a positive value.
  *
- * `yMin: 0 / yMax: 0` are sentinels meaning "auto" — the grid domain
- * expands from data unless the user sets non-zero values.
+ * `yMin: undefined / yMax: undefined` — the grid domain expands from data
+ * automatically. Set a number to pin the bound; `0` is a legitimate bound.
  */
 
 import type { ResolvedOpts } from './types.ts';
@@ -33,7 +33,7 @@ export const CHART_DEFAULTS: ResolvedOpts = {
   yTicks: 6,
   maxPoints: 0,
   autoDraw: false,
-  yMin: 0,
-  yMax: 0,
+  yMin: undefined,
+  yMax: undefined,
   maxDots: 2000,
 };
