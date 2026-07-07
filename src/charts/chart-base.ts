@@ -62,6 +62,13 @@ export abstract class ChartBase {
   private cursorY = -1;
   private showCrosshair = false;
 
+  /**
+   * Tracks whether the previous draw() painted a crosshair overlay. Lets draw()
+   * re-blit (clean) the canvas when the crosshair is hidden outside a streaming
+   * tick — without this the stale pixels stay until the next append.
+   */
+  private crosshairPainted = false;
+
   /** Logical index of the keyboard-cursor point in the reference series. */
   private cursorLogical = -1;
 
@@ -308,7 +315,18 @@ export abstract class ChartBase {
 
   /** Reusable crosshair-sync helpers used by both mouse and keyboard handlers. */
   private notifySyncCrosshair(): void {
-    const xVal = pxToX(this.cursorX, this.gridDomainLeft, this.plotRect());
+    // Only broadcast when the local cursor is inside the plot area — padding
+    // and axes shouldn't inject a garbage data-X into peers.
+    const plot = this.plotRect();
+    if (
+      this.cursorX < plot.x ||
+      this.cursorX > plot.x + plot.w ||
+      this.cursorY < plot.y ||
+      this.cursorY > plot.y + plot.h
+    ) {
+      return;
+    }
+    const xVal = pxToX(this.cursorX, this.gridDomainLeft, plot);
     for (const target of this.syncTargets) target.injectCursor(xVal);
   }
 
@@ -534,12 +552,22 @@ export abstract class ChartBase {
   /** Paint the chart. Cheap to call repeatedly: returns early when clean. */
   draw(): void {
     if (this.destroyed) return;
-    if (!this.dirty && !this.showCrosshair) return;
+    // Nothing to paint and no stale crosshair to clean — bail early.
+    if (!this.dirty && !this.showCrosshair && !this.crosshairPainted) return;
     const { cssW, cssH } = this.surface;
     if (cssW <= 0 || cssH <= 0) return;
 
     const plot = this.plotRect();
     if (plot.w <= 0 || plot.h <= 0) return;
+
+    // Crosshair was hidden outside a streaming tick — re-blit the static
+    // layer to clear the stale overlay immediately.
+    if (!this.dirty && !this.showCrosshair && this.crosshairPainted) {
+      this.surface.blit();
+      this.crosshairPainted = false;
+      if (this.onHover) this.onHover([]);
+      return;
+    }
 
     if (this.dirty) {
       this.renderStatic(plot);
@@ -549,41 +577,7 @@ export abstract class ChartBase {
     this.surface.blit();
 
     if (this.showCrosshair) {
-      // Detect stacked groups so we can use accumulated Y (matching the band
-      // edges) for crosshair dot positions.
-      const { groups: stackGroups } = this.detectAllStackGroups();
-
-      // Pre-compute accumulated crosshair views — for stacked series we
-      // replace yArr with the cumulative Y so dots sit on band edges.
-      const stackedSurrogates = new Map<number, Float64Array>();
-      for (const [, grp] of stackGroups) {
-        if (grp.length < 2) continue;
-        const { posCum, negCum } = this.accumulateStackGroup(grp);
-        if (!posCum && !negCum) continue;
-        // Combine positive and negative tracks so the crosshair dot sits on
-        // the net band edge (top of positive envelope plus negative dip).
-        const combined = posCum && negCum ? posCum.map((v, i) => v + negCum[i]) : (posCum ?? negCum)!;
-        for (const idx of grp) {
-          stackedSurrogates.set(idx, new Float64Array(combined));
-        }
-      }
-
-      const crosshairViews: SeriesView[] = this.stores.map((store, i) => {
-        const cfg = this.seriesConfigs[i];
-        const dom = (cfg.yAxis ?? 'left') === 'right' ? this.gridDomainRight : this.gridDomainLeft;
-        let viewYMin = dom.yMin;
-        let viewYMax = dom.yMax;
-        if (cfg.yMin != null) viewYMin = cfg.yMin;
-        if (cfg.yMax != null) viewYMax = cfg.yMax;
-        const accY = stackedSurrogates.get(i);
-        return Object.assign(Object.create(Object.getPrototypeOf(store)), store, {
-          xMin: dom.xMin,
-          xMax: dom.xMax,
-          yMin: viewYMin,
-          yMax: viewYMax,
-          ...(accY ? { yArr: accY } : {}),
-        });
-      });
+      const crosshairViews = this.buildCrosshairViews();
 
       if (this.onHover || this.liveRegion) {
         const hits = computeHits(crosshairViews, this.seriesConfigs, plot, this.cursorX);
@@ -610,6 +604,7 @@ export abstract class ChartBase {
     }
 
     this.dirty = false;
+    this.crosshairPainted = this.showCrosshair;
   }
 
   /** Detach observers/listeners and release buffers. Idempotent. */
@@ -1124,13 +1119,95 @@ export abstract class ChartBase {
     return s;
   }
 
+  /**
+   * Build crosshair proxy views with per-layer cumulative Y for stacked series
+   * so dots (and cursorY) sit on band edges instead of raw values. Reused by
+   * draw() and injectCursor().
+   */
+  private buildCrosshairViews(): SeriesView[] {
+    const { groups: stackGroups } = this.detectAllStackGroups();
+
+    const stackedSurrogates = new Map<number, Float64Array>();
+    for (const [, grp] of stackGroups) {
+      if (grp.length < 2) continue;
+      const first = this.stores[grp[0]];
+      const n = first.count;
+      if (n === 0) continue;
+
+      // Build cumulative Y arrays in physical layout (length = cap) so that
+      // computeHits() can use the proxy's physOf() to index into yArr
+      // correctly even when the ring buffer has wrapped (head != 0).
+      // Accumulation mirrors renderStackedBands: simple running sum per
+      // logical sample, stored at the physical slot for that sample.
+      const running = new Float64Array(first.cap);
+
+      for (const idx of grp) {
+        const s = this.stores[idx];
+        if (s.count !== n) continue;
+
+        const cumulative = new Float64Array(s.cap);
+        let p = s.head;
+        let toWrap = s.cap - s.head;
+
+        for (let j = 0; j < n; j++) {
+          running[p] += s.yArr[p];
+          cumulative[p] = running[p];
+
+          if (--toWrap === 0) {
+            p = 0;
+            toWrap = s.cap;
+          } else {
+            p++;
+          }
+        }
+
+        stackedSurrogates.set(idx, cumulative);
+      }
+    }
+
+    return this.stores.map((store, i) => {
+      const cfg = this.seriesConfigs[i];
+      const dom = (cfg.yAxis ?? 'left') === 'right' ? this.gridDomainRight : this.gridDomainLeft;
+      let viewYMin = dom.yMin;
+      let viewYMax = dom.yMax;
+      if (cfg.yMin != null) viewYMin = cfg.yMin;
+      if (cfg.yMax != null) viewYMax = cfg.yMax;
+      const accY = stackedSurrogates.get(i);
+      return Object.assign(Object.create(Object.getPrototypeOf(store)), store, {
+        xMin: dom.xMin,
+        xMax: dom.xMax,
+        yMin: viewYMin,
+        yMax: viewYMax,
+        ...(accY ? { yArr: accY } : {}),
+      });
+    });
+  }
+
+  /**
+   * Return a valid in-plot pixel-Y for the crosshair overlay — the interpolated
+   * Y of the first visible series at the current cursorX. Used by injectCursor
+   * so synced charts have a cursorY inside their own plot rect (avoiding the
+   * Y-bounds guard in renderCrosshair). Falls back to mid-plot if no series has
+   * data.
+   */
+  private deriveCursorYFromViews(plot: PlotRect, views: SeriesView[]): number {
+    const hits = computeHits(views, this.seriesConfigs, plot, this.cursorX);
+    if (hits.length > 0) return hits[0].py;
+    return plot.y + plot.h / 2;
+  }
+
   private injectCursor(xVal: number): void {
     const dom = this.gridDomainLeft;
-    if (xVal < dom.xMin || xVal > dom.xMax) {
-      this.injectCursorLeave();
-      return;
-    }
-    this.cursorX = xToPx(xVal, dom, this.plotRect());
+    if (dom.xMax <= dom.xMin) return; // domain not yet initialised
+    // Clamp to the chart's own X domain so the synced crosshair sticks to the
+    // nearest edge instead of disappearing when the two charts' domains are
+    // misaligned by a single tick (common during streaming with autoDraw).
+    const clamped = xVal < dom.xMin ? dom.xMin : xVal > dom.xMax ? dom.xMax : xVal;
+    const plot = this.plotRect();
+    this.cursorX = xToPx(clamped, dom, plot);
+    const views = this.buildCrosshairViews();
+    const y = this.deriveCursorYFromViews(plot, views);
+    this.cursorY = y < plot.y ? plot.y : y > plot.y + plot.h ? plot.y + plot.h : y;
     this.showCrosshair = true;
     this.draw();
   }

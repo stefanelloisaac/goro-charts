@@ -94,38 +94,10 @@
         min-width: 56px;
         color: var(--text);
       }
-      .ctrl select {
-        font: inherit;
-        font-size: 13px;
-        color: var(--text);
-        background: var(--card-hi);
-        border: 1px solid var(--border);
-        border-radius: 7px;
-        padding: 5px 8px;
-      }
       .spacer {
         flex: 1;
       }
-      .hover-info {
-        font-size: 12px;
-        font-variant-numeric: tabular-nums;
-        color: var(--muted);
-        background: var(--card);
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 8px 14px;
-        margin-bottom: 16px;
-        display: flex;
-        gap: 18px;
-        flex-wrap: wrap;
-      }
-      .hover-info span {
-        white-space: nowrap;
-      }
-      .hover-info b {
-        color: var(--text);
-        font-weight: 500;
-      }
+
       .btns {
         display: flex;
         gap: 8px;
@@ -158,38 +130,6 @@
       }
       button.primary:hover {
         background: #6cb8ff;
-      }
-
-      /* Metrics strip */
-      .metrics {
-        display: grid;
-        grid-template-columns: repeat(5, 1fr);
-        gap: 16px;
-        margin-bottom: 16px;
-      }
-      .metric {
-        background: var(--card);
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        padding: 12px 16px;
-      }
-      .metric .label {
-        font-size: 11px;
-        color: var(--muted);
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
-      }
-      .metric .value {
-        font-size: 22px;
-        font-weight: 600;
-        letter-spacing: -0.02em;
-        margin-top: 4px;
-        font-variant-numeric: tabular-nums;
-      }
-      .metric .value small {
-        font-size: 12px;
-        color: var(--faint);
-        font-weight: 400;
       }
 
       /* KPI row */
@@ -287,9 +227,6 @@
         }
       }
       @media (max-width: 860px) {
-        .metrics {
-          grid-template-columns: repeat(2, 1fr);
-        }
         .kpis {
           grid-template-columns: repeat(2, 1fr);
         }
@@ -303,7 +240,7 @@
     <div class="wrap">
       <header>
         <h1>Goro Charts</h1>
-        <span class="sub">streaming dashboard · live data + performance probe</span>
+        <span class="sub">streaming dashboard · live data with crosshair sync</span>
       </header>
 
       <section class="controls">
@@ -314,27 +251,6 @@
             <span class="num" id="intervalVal">1000 ms</span>
           </div>
         </div>
-        <div class="ctrl">
-          <label>Points / tick</label>
-          <div class="row">
-            <input type="range" id="batch" min="1" max="500" step="1" value="1" />
-            <span class="num" id="batchVal">1</span>
-          </div>
-        </div>
-        <div class="ctrl">
-          <label>Window (points)</label>
-          <div class="row">
-            <input type="range" id="window" min="200" max="10000" step="100" value="2000" />
-            <span class="num" id="windowVal">2000</span>
-          </div>
-        </div>
-        <div class="ctrl">
-          <label>Mode</label>
-          <select id="mode">
-            <option value="interval">setInterval</option>
-            <option value="raf">requestAnimationFrame (max)</option>
-          </select>
-        </div>
         <div class="spacer"></div>
         <div class="btns">
           <button class="primary" id="toggle">Pause</button>
@@ -342,13 +258,50 @@
         </div>
       </section>
 
-      <div id="hover" class="hover-info" style="display: none"></div>
+      <section class="kpis" id="kpis">
+        <div class="kpi">
+          <div class="label">CPU</div>
+          <div class="value">—</div>
+          <div class="range">—</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Req/s</div>
+          <div class="value">—</div>
+          <div class="range">—</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Network</div>
+          <div class="value">—</div>
+          <div class="range">—</div>
+        </div>
+      </section>
 
-      <section class="metrics" id="metrics"></section>
-
-      <section class="kpis" id="kpis"></section>
-
-      <section class="grid" id="grid"></section>
+      <section class="grid" id="grid">
+        <div class="panel">
+          <div class="head">
+            <span class="dot" style="background: #4ea8ff"></span>
+            <span class="title">CPU + Req/s (dual Y)</span>
+            <span class="badge">—</span>
+          </div>
+          <canvas></canvas>
+        </div>
+        <div class="panel">
+          <div class="head">
+            <span class="dot" style="background: #52d4a0"></span>
+            <span class="title">Requests (stacked area)</span>
+            <span class="badge">—</span>
+          </div>
+          <canvas></canvas>
+        </div>
+        <div class="panel">
+          <div class="head">
+            <span class="dot" style="background: #f07167"></span>
+            <span class="title">Network Activity</span>
+            <span class="badge">—</span>
+          </div>
+          <canvas></canvas>
+        </div>
+      </section>
 
       <footer id="footer"></footer>
     </div>

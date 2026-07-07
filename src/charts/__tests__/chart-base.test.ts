@@ -474,6 +474,7 @@ describe('Crosshair sync por valor', () => {
     const plotA = chartA['plotRect']();
     const xPxA = xToPx(50, chartA['gridDomainLeft'], plotA);
     chartA['cursorX'] = xPxA;
+    chartA['cursorY'] = plotA.y + 10; // dentro do plot para passar na validação
     chartA['notifySyncCrosshair']();
 
     // chartB deve ter um cursorX que corresponde ao valor 50 no seu domínio
@@ -484,7 +485,7 @@ describe('Crosshair sync por valor', () => {
     expect(chartB['showCrosshair']).toBe(true);
   });
 
-  it('valor fora do domínio oculta crosshair no target', () => {
+  it('valor fora do domínio é clampado na borda (não esconde)', () => {
     const chartA = new LineChart(canvasA, { series: [{ name: 'A', color: '#f00' }], autoDraw: false } as any);
     const chartB = new LineChart(canvasB, { series: [{ name: 'B', color: '#0f0' }], autoDraw: false } as any);
 
@@ -496,13 +497,20 @@ describe('Crosshair sync por valor', () => {
     chartB.draw();
 
     chartA.sync(chartB);
-    chartA['showCrosshair'] = true;
 
-    // Valor 999 está fora do domínio X [0, 100] do chartA.
-    // injectCursor oculta o crosshair no próprio chart e dispara
-    // notifySyncCrosshairLeave() nos peers.
+    // Valor 999 > xMax=100 — deve ser clampado para xMax=100 em vez de esconder.
     chartA['injectCursor'](999);
-    expect(chartA['showCrosshair']).toBe(false);
+    expect(chartA['showCrosshair']).toBe(true);
+    const expectedPx = xToPx(100, chartA['gridDomainLeft'], chartA['plotRect']());
+    expect(chartA['cursorX']).toBe(expectedPx);
+
+    // Valor -50 < xMin=0 — deve ser clampado para xMin=0.
+    chartA['injectCursor'](-50);
+    expect(chartA['showCrosshair']).toBe(true);
+    const expectedPxMin = xToPx(0, chartA['gridDomainLeft'], chartA['plotRect']());
+    expect(chartA['cursorX']).toBe(expectedPxMin);
+
+    // O peer não é afetado diretamente (injectCursor não notifica peers).
     expect(chartB['showCrosshair']).toBe(false);
   });
 
@@ -755,5 +763,111 @@ describe('README examples (verifiable)', () => {
     const xBad = new Float64Array([0, 1, 0]) as unknown as Float64Array<ArrayBufferLike>; // não-monotônico
     const y = new Float64Array([10, 20, 30]) as unknown as Float64Array<ArrayBufferLike>;
     expect(() => chart.setData(0, xBad, y)).toThrow('series 0');
+  });
+
+  it('injectCursor define cursorY válido e showCrosshair=true no alvo', () => {
+    const targetCanvas = createCanvas();
+    const chartA = new LineChart(canvas, { series: [{ name: 'A', color: '#f00' }], autoDraw: false } as any);
+    const chartB = new LineChart(targetCanvas, { series: [{ name: 'B', color: '#0f0' }], autoDraw: false } as any);
+
+    const x = new Float64Array([0, 50, 100]) as unknown as Float64Array<ArrayBufferLike>;
+    const y = new Float64Array([10, 60, 30]) as unknown as Float64Array<ArrayBufferLike>;
+    chartA.setData(0, x, y);
+    chartA.draw();
+    chartB.setData(0, x, y);
+    chartB.draw();
+
+    chartA.sync(chartB);
+
+    chartB['injectCursor'](50);
+
+    expect(chartB['showCrosshair']).toBe(true);
+    // cursorY must have been set (was -1 before the fix)
+    expect(chartB['cursorY']).not.toBe(-1);
+    expect(Number.isFinite(chartB['cursorY'])).toBe(true);
+
+    targetCanvas.remove();
+    chartA.destroy();
+    chartB.destroy();
+  });
+
+  it('injectCursor em AreaChart stacked define cursorY dentro do plot', () => {
+    const targetCanvas = createCanvas();
+    const chartA = new LineChart(canvas, { series: [{ name: 'A', color: '#f00' }], autoDraw: false } as any);
+    const chartB = new AreaChart(targetCanvas, {
+      series: [
+        { name: 'User', color: '#00f', stack: 'r', fillColor: '#00f', fillOpacity: 0.1 },
+        { name: 'Sys', color: '#0f0', stack: 'r', fillColor: '#0f0', fillOpacity: 0.1 },
+      ],
+      autoDraw: false,
+    } as any);
+
+    const x = new Float64Array([0, 50, 100]) as unknown as Float64Array<ArrayBufferLike>;
+    const y1 = new Float64Array([4000, 5000, 6000]) as unknown as Float64Array<ArrayBufferLike>;
+    const y2 = new Float64Array([2000, 3000, 4000]) as unknown as Float64Array<ArrayBufferLike>;
+    chartA.setData(0, x, y1);
+    chartA.draw();
+    chartB.setData(0, x, y1);
+    chartB.setData(1, x, y2);
+    chartB.draw();
+
+    chartA.sync(chartB);
+
+    chartB['injectCursor'](50);
+
+    expect(chartB['showCrosshair']).toBe(true);
+    // cursorY must be inside the plot rect so renderCrosshair doesn't bail.
+    const plot = chartB['plotRect']();
+    expect(chartB['cursorY']).toBeGreaterThanOrEqual(plot.y);
+    expect(chartB['cursorY']).toBeLessThanOrEqual(plot.y + plot.h);
+
+    targetCanvas.remove();
+    chartA.destroy();
+    chartB.destroy();
+  });
+
+  it('injectCursor em AreaChart stacked com ring buffer wrap mantém cursorY no plot', () => {
+    const targetCanvas = createCanvas();
+    const chartB = new AreaChart(targetCanvas, {
+      series: [
+        { name: 'User', color: '#00f', stack: 'r', fillColor: '#00f', fillOpacity: 0.1 },
+        { name: 'Sys', color: '#0f0', stack: 'r', fillColor: '#0f0', fillOpacity: 0.1 },
+      ],
+      maxPoints: 3, // ring wraps after 3 points
+      autoDraw: false,
+    } as any);
+
+    // Feed 5 points so the ring wraps (head !== 0).
+    for (let i = 0; i < 5; i++) {
+      chartB.append(0, i, 1000 + i * 100);
+      chartB.append(1, i, 500 + i * 50);
+    }
+    chartB.draw();
+
+    chartB['injectCursor'](2); // middle of [0, 4]
+
+    expect(chartB['showCrosshair']).toBe(true);
+    const plot = chartB['plotRect']();
+    expect(chartB['cursorY']).toBeGreaterThanOrEqual(plot.y);
+    expect(chartB['cursorY']).toBeLessThanOrEqual(plot.y + plot.h);
+
+    targetCanvas.remove();
+    chartB.destroy();
+  });
+
+  it('injectCursorLeave limpa crosshair via crosshairPainted sem esperar tick', () => {
+    const chart = new LineChart(canvas, { series: [{ name: 'A', color: '#f00' }], autoDraw: false } as any);
+    const x = new Float64Array([0, 50]) as unknown as Float64Array<ArrayBufferLike>;
+    const y = new Float64Array([10, 60]) as unknown as Float64Array<ArrayBufferLike>;
+    chart.setData(0, x, y);
+    chart.draw();
+    chart['showCrosshair'] = true;
+    chart['crosshairPainted'] = true; // simula que crosshair foi pintado no último draw
+
+    chart['injectCursorLeave']();
+
+    // Depois de injectCursorLeave: showCrosshair deve ser false e crosshairPainted limpo
+    expect(chart['showCrosshair']).toBe(false);
+    expect(chart['crosshairPainted']).toBe(false);
   });
 });

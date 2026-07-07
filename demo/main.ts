@@ -1,204 +1,210 @@
 /**
- * @file Streaming dashboard entry point.
+ * @file Goro Charts — Streaming Dashboard Demo
  *
- * Wires the panels, metrics strip, and control bar together and runs the tick
- * loop. Each tick generates batches per-series and appends to the engine
- * (ring mode); the chart's autoDraw coalesces the burst into one rAF paint.
- * Append cost is measured per tick and surfaced in the metrics strip, so the
- * controls double as a live performance probe.
+ * Demonstrates idiomatic library usage:
+ *   - Chart creation: `new LineChart(canvas, opts)`
+ *   - Data feeding:   `chart.append(seriesIndex, x, y)`
+ *   - Crosshair sync:  `chart.sync(otherChart)`
+ *   - Custom tooltips: `chart.onHover = (hits) => { ... }`
+ *   - KPI metrics:     `chart.lastValue()`, `chart.extentMin()`, `chart.extentMax()`
+ *   - Point counts:    `chart.pointCount()`
+ *   - Reset:           `chart.clear()`
  */
 
-import { PANELS, buildPanel, type Panel } from './panels.ts';
-import { buildMetrics } from './metrics.ts';
-import { fmt } from './format.ts';
-import type { SeriesHit } from '../src/index.ts';
+import { LineChart, AreaChart, ScatterChart } from '../src/index.ts';
+import { nextRandomWalk, nextNoisySine, nextSpiky } from './generators.ts';
+import type { RandomWalkState, NoisySineState, SpikyState } from './generators.ts';
 
-const gridEl = document.getElementById('grid')!;
-const kpisEl = document.getElementById('kpis')!;
-const footerEl = document.getElementById('footer')!;
-const hoverEl = document.getElementById('hover')!;
-const metricEls = buildMetrics(document.getElementById('metrics')!);
+// ---- 1. Select canvases from the static HTML --------------------------
 
-// ---- Controls ------------------------------------------------------------
+const canvases = document.querySelectorAll<HTMLCanvasElement>('#grid canvas');
 
-const $ = (id: string) => document.getElementById(id) as HTMLInputElement;
-const intervalEl = $('interval'),
-  intervalVal = document.getElementById('intervalVal')!;
-const batchEl = $('batch'),
-  batchVal = document.getElementById('batchVal')!;
-const windowEl = $('window'),
-  windowVal = document.getElementById('windowVal')!;
-const modeEl = $('mode');
-const toggleEl = $('toggle'),
-  resetEl = $('reset');
+// ---- 2. Create charts — one constructor call per chart -----------------
 
-let intervalMs = +intervalEl.value;
-let batchSize = +batchEl.value;
-let windowSize = +windowEl.value;
-let mode = modeEl.value as 'interval' | 'raf';
-let running = true;
-
-let tickCount = 0;
-let totalPoints = 0;
-let drawAvg = 0;
-let pointsThisSecond = 0;
-
-// ---- Panels --------------------------------------------------------------
-
-const panels: Panel[] = PANELS.map((def) => buildPanel(gridEl, kpisEl, def, windowSize));
-
-// Crosshair sync: moving the mouse on panel 0 or 1 mirrors on the other.
-panels[0].chart.sync(panels[1].chart);
-
-// onHover callback: render interpolated values into the hover strip.
-panels[0].chart.onHover = (hits: SeriesHit[]) => {
-  hoverEl.style.display = 'flex';
-  hoverEl.innerHTML = hits
-    .map((h) => `<span>● <b>${h.label}</b> ${fmt(h.yVal, h.yVal % 1 === 0 ? 0 : 1)}</span>`)
-    .join('');
+const SHARED = {
+  maxPoints: 2000,
+  autoDraw: true,
+  bgColor: '#161618',
+  padding: [12, 12, 24, 48] as [number, number, number, number],
+  xTicks: 5,
+  yTicks: 4,
 };
 
-// ---- Tick: generate batch per series, append, measure --------------------
+const cpuChart = new LineChart(canvases[0], {
+  ...SHARED,
+  series: [
+    { name: 'CPU', color: '#4ea8ff', lineWidth: 1.6, yMin: 0, yMax: 100 },
+    { name: 'Req/s', color: '#ffb454', lineWidth: 1.2, dash: [8, 4], yAxis: 'right' },
+  ],
+});
+
+const reqChart = new AreaChart(canvases[1], {
+  ...SHARED,
+  series: [
+    { name: 'User', color: '#4ea8ff', fillColor: '#4ea8ff', fillOpacity: 0.12, stack: 'reqs' },
+    { name: 'Sys', color: '#52d4a0', fillColor: '#52d4a0', fillOpacity: 0.12, stack: 'reqs' },
+  ],
+});
+
+const netChart = new ScatterChart(canvases[2], {
+  ...SHARED,
+  series: [
+    { name: 'Packets', color: '#f07167' },
+    { name: 'Errors', color: '#ffb454', dash: [4, 4] },
+  ],
+});
+
+// ---- 3. Crosshair sync — bidirectionally link two charts ---------------
+
+cpuChart.sync(reqChart);
+
+// ---- 4. Signal generator state — plain objects, no closures ------------
+
+const cpuGen: RandomWalkState = { v: 50 };
+const reqGen: NoisySineState = { i: 0, base: 8000, amp: 2500, period: 400, noise: 1200 };
+const userGen: NoisySineState = { i: 0, base: 4000, amp: 1200, period: 400, noise: 300 };
+const sysGen: NoisySineState = { i: 0, base: 2000, amp: 600, period: 350, noise: 250 };
+const pktGen: SpikyState = { v: 10 };
+const errGen: SpikyState = { v: 10 };
+
+// ---- 6. KPI elements — cached once, updated per tick -------------------
+
+const kpiValues = document.querySelectorAll<HTMLElement>('#kpis .value');
+const kpiRanges = document.querySelectorAll<HTMLElement>('#kpis .range');
+const badges = document.querySelectorAll<HTMLElement>('#grid .badge');
+const footerEl = document.getElementById('footer')!;
+
+// ---- 7. Tick loop — feed one point per series per tick -----------------
+
+let x = 0;
+let tickCount = 0;
+let totalPoints = 0;
 
 function tick(): void {
-  let appendMs = 0;
+  // Line chart: CPU (series 0) + Req/s (series 1)
+  cpuChart.append(0, x, nextRandomWalk(cpuGen));
+  cpuChart.append(1, x, nextNoisySine(reqGen));
 
-  for (const p of panels) {
-    const reps = Math.max(1, Math.round(batchSize * p.def.batchMul));
-    if (reps > p.bx.length) {
-      p.bx = new Float64Array(reps);
-      p.by = new Float64Array(reps);
-    }
-    const bx = p.bx,
-      by = p.by;
+  // Area chart: User (series 0) + Sys (series 1)
+  reqChart.append(0, x, nextNoisySine(userGen));
+  reqChart.append(1, x, nextNoisySine(sysGen));
 
-    const t0 = performance.now();
+  // Scatter chart: Packets (series 0) + Errors (series 1)
+  netChart.append(0, x, nextSpiky(pktGen));
+  netChart.append(1, x, nextSpiky(errGen));
 
-    for (let si = 0; si < p.gens.length; si++) {
-      const gen = p.gens[si];
-      for (let i = 0; i < reps; i++) {
-        bx[i] = p.nextXs[si];
-        by[i] = gen.next();
-        p.nextXs[si]++;
-      }
-      p.chart.appendBatch(si, bx.subarray(0, reps), by.subarray(0, reps));
-      totalPoints += reps;
-      pointsThisSecond += reps;
-    }
-
-    appendMs += performance.now() - t0;
-
-    const kpiSeries = p.def.kpiSeries ?? 0;
-    if (p.def.kpi && p.valueEl && p.rangeEl) {
-      const u = p.def.kpi.unit,
-        d = p.def.kpi.digits ?? 0;
-      p.valueEl.textContent = `${fmt(p.chart.lastValue(kpiSeries), d)}${u}`;
-      p.rangeEl.textContent = `min ${fmt(p.chart.extentMin(kpiSeries), d)}${u} · max ${fmt(p.chart.extentMax(kpiSeries), d)}${u}`;
-    }
-
-    p.badgeEl.textContent = `${fmt(p.chart.pointCount(0))} pts`;
-  }
-
+  x++;
   tickCount++;
-  drawAvg = drawAvg === 0 ? appendMs : drawAvg * 0.9 + appendMs * 0.1;
+  totalPoints += 6;
 
-  metricEls.last.innerHTML = `${appendMs.toFixed(2)} <small>ms</small>`;
-  metricEls.avg.innerHTML = `${drawAvg.toFixed(2)} <small>ms</small>`;
-  metricEls.ticks.textContent = fmt(tickCount);
-  metricEls.total.textContent = fmt(totalPoints);
+  updateKpis();
 }
 
-// ---- Scheduler (interval or rAF) -----------------------------------------
+// ---- 8. Drive KPI cards and badges from the chart API ------------------
 
-let timerId: number | null = null;
-let rafId: number | null = null;
-let lastRaf = 0;
+function updateKpis(): void {
+  // CPU KPI (series 0)
+  kpiValues[0].textContent = `${cpuChart.lastValue(0).toFixed(0)}%`;
+  kpiRanges[0].textContent = [
+    `min ${cpuChart.extentMin(0).toFixed(0)}%`,
+    `max ${cpuChart.extentMax(0).toFixed(0)}%`,
+  ].join(' · ');
 
-function stopScheduler(): void {
+  // Req/s KPI (series 0)
+  kpiValues[1].textContent = reqChart.lastValue(0).toFixed(0);
+  kpiRanges[1].textContent = [
+    `min ${reqChart.extentMin(0).toFixed(0)}`,
+    `max ${reqChart.extentMax(0).toFixed(0)}`,
+  ].join(' · ');
+
+  // Network KPI (series 0)
+  kpiValues[2].textContent = `${netChart.lastValue(0).toFixed(1)} MB/s`;
+  kpiRanges[2].textContent = [
+    `min ${netChart.extentMin(0).toFixed(1)}`,
+    `max ${netChart.extentMax(0).toFixed(1)}`,
+  ].join(' · ');
+
+  // Point-count badges
+  badges[0].textContent = `${cpuChart.pointCount(0)} pts`;
+  badges[1].textContent = `${reqChart.pointCount(0)} pts`;
+  badges[2].textContent = `${netChart.pointCount(0)} pts`;
+
+  // Footer
+  footerEl.textContent = [
+    `${tickCount} ticks`,
+    `${totalPoints} pts`,
+    'dual‑Y',
+    'stacked area',
+    'scatter',
+    'synced crosshair',
+  ].join(' · ');
+}
+
+// ---- 9. Controls -------------------------------------------------------
+
+const intervalEl = document.getElementById('interval') as HTMLInputElement;
+const intervalVal = document.getElementById('intervalVal')!;
+const toggleBtn = document.getElementById('toggle') as HTMLButtonElement;
+const resetBtn = document.getElementById('reset') as HTMLButtonElement;
+
+let intervalMs = +intervalEl.value || 1000;
+let running = true;
+let timerId: ReturnType<typeof setInterval> | null = null;
+
+function startLoop(): void {
   if (timerId !== null) {
     clearInterval(timerId);
     timerId = null;
   }
-  if (rafId !== null) {
-    cancelAnimationFrame(rafId);
-    rafId = null;
+  if (running && intervalMs > 0) {
+    timerId = setInterval(tick, Math.max(16, intervalMs));
   }
 }
-
-function startScheduler(): void {
-  stopScheduler();
-  if (!running) return;
-  if (mode === 'raf') {
-    lastRaf = performance.now();
-    const loop = (now: number) => {
-      if (!running || mode !== 'raf') return;
-      if (intervalMs === 0 || now - lastRaf >= intervalMs) {
-        lastRaf = now;
-        tick();
-      }
-      rafId = requestAnimationFrame(loop);
-    };
-    rafId = requestAnimationFrame(loop);
-  } else {
-    timerId = window.setInterval(tick, Math.max(0, intervalMs));
-  }
-}
-
-// ---- Points-per-second sampler (1s cadence) ------------------------------
-
-setInterval(() => {
-  metricEls.pps.textContent = fmt(pointsThisSecond);
-  pointsThisSecond = 0;
-  footerEl.textContent = `${panels.length} charts · stacked area + dual-Y + sync · window ${fmt(windowSize)} pts · mode: ${mode}`;
-}, 1000);
-
-// ---- Control wiring ------------------------------------------------------
 
 intervalEl.addEventListener('input', () => {
   intervalMs = +intervalEl.value;
   intervalVal.textContent = `${intervalMs} ms`;
-  startScheduler();
+  startLoop();
 });
-batchEl.addEventListener('input', () => {
-  batchSize = +batchEl.value;
-  batchVal.textContent = String(batchSize);
-});
-windowEl.addEventListener('input', () => {
-  windowSize = +windowEl.value;
-  windowVal.textContent = fmt(windowSize);
-  for (const p of panels) {
-    p.chart.setMaxPoints(Math.max(2, Math.round(windowSize * p.def.windowMul)));
-  }
-});
-modeEl.addEventListener('change', () => {
-  mode = modeEl.value as 'interval' | 'raf';
-  startScheduler();
-});
-toggleEl.addEventListener('click', () => {
+
+toggleBtn.addEventListener('click', () => {
   running = !running;
-  toggleEl.textContent = running ? 'Pause' : 'Start';
-  toggleEl.classList.toggle('primary', running);
-  startScheduler();
+  toggleBtn.textContent = running ? 'Pause' : 'Start';
+  toggleBtn.classList.toggle('primary', running);
+  startLoop();
 });
-resetEl.addEventListener('click', () => {
-  for (const p of panels) {
-    p.chart.clear();
-    p.gens = p.def.series.map((s) => s.gen());
-    p.nextXs = p.def.series.map(() => 0);
-  }
+
+resetBtn.addEventListener('click', () => {
+  // Clear all chart data
+  cpuChart.clear();
+  reqChart.clear();
+  netChart.clear();
+
+  // Reset generator state
+  cpuGen.v = 50;
+  reqGen.i = 0;
+  userGen.i = 0;
+  sysGen.i = 0;
+  pktGen.v = 10;
+  errGen.v = 10;
+
+  // Reset counters
+  x = 0;
   tickCount = 0;
   totalPoints = 0;
-  drawAvg = 0;
-  pointsThisSecond = 0;
-  metricEls.total.textContent = '0';
-  metricEls.ticks.textContent = '0';
+
+  // Reset UI elements
+  kpiValues.forEach((el) => (el.textContent = '—'));
+  kpiRanges.forEach((el) => (el.textContent = '—'));
+  badges.forEach((el) => (el.textContent = '—'));
+  footerEl.textContent = '';
+
+  // Run one tick to re-seed the view
+  tick();
 });
 
-// ---- Go ------------------------------------------------------------------
+// ---- 10. Go! -----------------------------------------------------------
 
 intervalVal.textContent = `${intervalMs} ms`;
-batchVal.textContent = String(batchSize);
-windowVal.textContent = fmt(windowSize);
-
 tick();
-startScheduler();
+startLoop();

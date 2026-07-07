@@ -1,60 +1,45 @@
 /**
- * @file Stateful signal generators for the streaming demo.
+ * @file Simple signal generators for the demo.
+ *
+ * Each function takes a mutable state object and returns the next value.
+ * No interfaces or closures — just plain functions operating on plain objects.
  */
 
-export interface Generator {
-  next(): number;
+export interface RandomWalkState {
+  v: number;
 }
 
-/** Bounded random walk in [0, 100] — feels like CPU load. */
-export function randomWalkGen(start = 50): Generator {
-  let v = start;
-  return {
-    next() {
-      v += (Math.random() - 0.5) * 4;
-      if (v < 0) v = 0;
-      if (v > 100) v = 100;
-      return v;
-    },
-  };
+/** Bounded random walk in [0, 100] – feels like CPU load. */
+export function nextRandomWalk(s: RandomWalkState): number {
+  s.v += (Math.random() - 0.5) * 4;
+  if (s.v < 0) s.v = 0;
+  if (s.v > 100) s.v = 100;
+  return s.v;
 }
 
-/** Slow sine with light noise — feels like temperature. */
-export function slowSineGen(base = 50, amp = 8, period = 600): Generator {
-  let i = 0;
-  const k = (2 * Math.PI) / period;
-  return {
-    next() {
-      const v = base + Math.sin(i * k) * amp + (Math.random() - 0.5) * 1.5;
-      i++;
-      return v;
-    },
-  };
+export interface NoisySineState {
+  i: number;
+  base: number;
+  amp: number;
+  period: number;
+  noise: number;
 }
 
-/** Sine over a busy baseline with noise — feels like requests/sec. */
-export function noisySineGen(base = 8000, amp = 2500, period = 400, noise = 1200): Generator {
-  let i = 0;
-  const k = (2 * Math.PI) / period;
-  return {
-    next() {
-      const v = base + Math.sin(i * k) * amp + (Math.random() - 0.5) * noise;
-      i++;
-      return v;
-    },
-  };
+/** Sine over a busy baseline with noise – feels like requests/sec. */
+export function nextNoisySine(s: NoisySineState): number {
+  s.i++;
+  return s.base + Math.sin(s.i * ((2 * Math.PI) / s.period)) * s.amp + (Math.random() - 0.5) * s.noise;
 }
 
-/** Low baseline with decaying bursts — feels like network packets. */
-export function spikyGen(): Generator {
-  let v = 10;
-  return {
-    next() {
-      v += (Math.random() - 0.5) * 2;
-      if (v < 2) v = 2;
-      if (Math.random() < 0.01) v += Math.random() * 40;
-      v *= 0.96;
-      return v;
-    },
-  };
+export interface SpikyState {
+  v: number;
+}
+
+/** Low baseline with decaying bursts – feels like network packets. */
+export function nextSpiky(s: SpikyState): number {
+  s.v += (Math.random() - 0.5) * 2;
+  if (s.v < 2) s.v = 2;
+  if (Math.random() < 0.01) s.v += Math.random() * 40;
+  s.v *= 0.96;
+  return s.v;
 }
