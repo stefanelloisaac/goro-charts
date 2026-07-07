@@ -871,3 +871,368 @@ describe('README examples (verifiable)', () => {
     expect(chart['crosshairPainted']).toBe(false);
   });
 });
+
+describe('Identificadores de série (id)', () => {
+  let canvas: HTMLCanvasElement;
+
+  beforeEach(() => {
+    canvas = createCanvas();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    canvas.remove();
+    vi.useRealTimers();
+  });
+
+  function seed(chart: LineChart, ref: number | string): void {
+    const x = new Float64Array([0, 1, 2]) as unknown as Float64Array<ArrayBufferLike>;
+    const y = new Float64Array([10, 20, 30]) as unknown as Float64Array<ArrayBufferLike>;
+    chart.setData(ref, x, y);
+  }
+
+  it('métodos aceitam id em vez de índice', () => {
+    const chart = new LineChart(canvas, {
+      series: [
+        { id: 'cpu', name: 'CPU', color: '#f00' },
+        { id: 'mem', name: 'MEM', color: '#0f0' },
+      ],
+      autoDraw: false,
+    } as any);
+
+    seed(chart, 'cpu');
+    seed(chart, 'mem');
+
+    expect(chart.pointCount('cpu')).toBe(3);
+    expect(chart.lastValue('mem')).toBe(30);
+    // O id resolve para o mesmo store que o índice.
+    expect(chart.pointCount('mem')).toBe(chart.pointCount(1));
+  });
+
+  it('id duplicado é rejeitado na construção', () => {
+    expect(
+      () =>
+        new LineChart(canvas, {
+          series: [
+            { id: 'dup', name: 'A', color: '#f00' },
+            { id: 'dup', name: 'B', color: '#0f0' },
+          ],
+          autoDraw: false,
+        } as any),
+    ).toThrow('duplicate series id "dup"');
+  });
+
+  it('id desconhecido gera erro com o id', () => {
+    const chart = new LineChart(canvas, {
+      series: [{ id: 'cpu', name: 'CPU', color: '#f00' }],
+      autoDraw: false,
+    } as any);
+    expect(() => seed(chart, 'ghost')).toThrow('series id "ghost" not found');
+  });
+
+  it('mensagens de erro exibem o id', () => {
+    const chart = new LineChart(canvas, {
+      series: [{ id: 'cpu', name: 'CPU', color: '#f00' }],
+      autoDraw: false,
+    } as any);
+    const xBad = new Float64Array([0, 1, 0]) as unknown as Float64Array<ArrayBufferLike>; // não-monotônico
+    const y = new Float64Array([10, 20, 30]) as unknown as Float64Array<ArrayBufferLike>;
+    expect(() => chart.setData('cpu', xBad, y)).toThrow('series "cpu"');
+  });
+
+  it('índice fora de faixa continua sendo rejeitado', () => {
+    const chart = new LineChart(canvas, {
+      series: [{ name: 'A', color: '#f00' }],
+      autoDraw: false,
+    } as any);
+    const x = new Float64Array([0, 1]) as unknown as Float64Array<ArrayBufferLike>;
+    const y = new Float64Array([10, 20]) as unknown as Float64Array<ArrayBufferLike>;
+    expect(() => chart.setData(5, x, y)).toThrow('out of range');
+  });
+});
+
+describe('setOptions (atualização dinâmica)', () => {
+  let canvas: HTMLCanvasElement;
+
+  beforeEach(() => {
+    canvas = createCanvas();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    canvas.remove();
+    vi.useRealTimers();
+  });
+
+  function seed(chart: LineChart): void {
+    const x = new Float64Array([0, 1, 2]) as unknown as Float64Array<ArrayBufferLike>;
+    const y = new Float64Array([10, 20, 30]) as unknown as Float64Array<ArrayBufferLike>;
+    chart.setData(0, x, y);
+    chart.draw();
+  }
+
+  it('alterar cor (visual) não recalcula o domínio', () => {
+    const chart = new LineChart(canvas, {
+      series: [{ name: 'A', color: '#f00' }],
+      autoDraw: false,
+    } as any);
+    seed(chart);
+    const before = { ...chart['gridDomainLeft'] };
+
+    chart.setOptions({ crosshairColor: '#123456' });
+
+    expect(chart['gridDomainLeft']).toEqual(before);
+    expect(chart['gridPinned']).toBe(true); // não foi desanexado
+  });
+
+  it('alterar chave estrutural recalcula o layout', () => {
+    const chart = new LineChart(canvas, {
+      series: [{ name: 'A', color: '#f00' }],
+      autoDraw: false,
+    } as any);
+    seed(chart);
+
+    chart.setOptions({ padding: [0, 0, 0, 0] });
+
+    // gridPinned volta a false até o próximo draw reancorar.
+    expect(chart['gridPinned']).toBe(false);
+  });
+
+  it('substituir series com tamanho diferente é rejeitado', () => {
+    const chart = new LineChart(canvas, {
+      series: [{ name: 'A', color: '#f00' }],
+      autoDraw: false,
+    } as any);
+    expect(() =>
+      chart.setOptions({
+        series: [
+          { name: 'A', color: '#f00' },
+          { name: 'B', color: '#0f0' },
+        ],
+      }),
+    ).toThrow('use addSeries/removeSeries');
+  });
+});
+
+describe('Add / remove / show / hide de séries', () => {
+  let canvas: HTMLCanvasElement;
+
+  beforeEach(() => {
+    canvas = createCanvas();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    canvas.remove();
+    vi.useRealTimers();
+  });
+
+  it('addSeries adiciona uma série em runtime', () => {
+    const chart = new LineChart(canvas, {
+      series: [{ id: 'a', name: 'A', color: '#f00' }],
+      autoDraw: false,
+    } as any);
+
+    const idx = chart.addSeries({ id: 'b', name: 'B', color: '#0f0' });
+
+    expect(idx).toBe(1);
+    expect(chart.seriesCount).toBe(2);
+    const x = new Float64Array([0, 1]) as unknown as Float64Array<ArrayBufferLike>;
+    const y = new Float64Array([5, 6]) as unknown as Float64Array<ArrayBufferLike>;
+    chart.setData('b', x, y);
+    expect(chart.lastValue('b')).toBe(6);
+  });
+
+  it('addSeries preserva o modo ring (maxPoints)', () => {
+    const chart = new LineChart(canvas, {
+      series: [{ name: 'A', color: '#f00' }],
+      maxPoints: 3,
+      autoDraw: false,
+    } as any);
+    const idx = chart.addSeries({ name: 'B', color: '#0f0' });
+    // append só funciona em modo ring; não deve lançar.
+    expect(() => chart.append(idx, 0, 10)).not.toThrow();
+  });
+
+  it('addSeries com id duplicado é rejeitado', () => {
+    const chart = new LineChart(canvas, {
+      series: [{ id: 'a', name: 'A', color: '#f00' }],
+      autoDraw: false,
+    } as any);
+    expect(() => chart.addSeries({ id: 'a', name: 'dup', color: '#0f0' })).toThrow('duplicate series id "a"');
+
+    // O erro deve ser atômico: a série duplicada não é anexada e o id-map
+    // permanece íntegro para mutações futuras.
+    expect(chart.seriesCount).toBe(1);
+    expect(() => chart.addSeries({ id: 'b', name: 'B', color: '#0f0' })).not.toThrow();
+    expect(chart.seriesCount).toBe(2);
+    expect(chart.pointCount('b')).toBe(0);
+  });
+
+  it('removeSeries remove e reindexa', () => {
+    const chart = new LineChart(canvas, {
+      series: [
+        { id: 'a', name: 'A', color: '#f00' },
+        { id: 'b', name: 'B', color: '#0f0' },
+      ],
+      autoDraw: false,
+    } as any);
+    const x = new Float64Array([0, 1]) as unknown as Float64Array<ArrayBufferLike>;
+    const y = new Float64Array([5, 6]) as unknown as Float64Array<ArrayBufferLike>;
+    chart.setData('a', x, y);
+    chart.setData('b', x, y);
+
+    chart.removeSeries('a');
+
+    expect(chart.seriesCount).toBe(1);
+    // 'b' agora está no índice 0 e continua acessível por id.
+    expect(chart.pointCount('b')).toBe(2);
+    expect(chart.pointCount(0)).toBe(2);
+    // 'a' não existe mais.
+    expect(() => chart.pointCount('a')).toThrow('series id "a" not found');
+  });
+
+  it('hideSeries exclui a série do domínio', () => {
+    const chart = new LineChart(canvas, {
+      series: [
+        { id: 'lo', name: 'LO', color: '#f00' },
+        { id: 'hi', name: 'HI', color: '#0f0' },
+      ],
+      autoDraw: false,
+    } as any);
+    const x = new Float64Array([0, 1, 2]) as unknown as Float64Array<ArrayBufferLike>;
+    chart.setData('lo', x, new Float64Array([0, 1, 2]) as any);
+    chart.setData('hi', x, new Float64Array([100, 200, 300]) as any);
+    chart.draw();
+
+    const maxWithHi = chart['gridDomainLeft'].yMax;
+    chart.hideSeries('hi');
+    chart.draw();
+    const maxWithoutHi = chart['gridDomainLeft'].yMax;
+
+    expect(maxWithoutHi).toBeLessThan(maxWithHi);
+  });
+
+  it('showSeries restaura a série ao domínio', () => {
+    const chart = new LineChart(canvas, {
+      series: [
+        { id: 'lo', name: 'LO', color: '#f00' },
+        { id: 'hi', name: 'HI', color: '#0f0' },
+      ],
+      autoDraw: false,
+    } as any);
+    const x = new Float64Array([0, 1, 2]) as unknown as Float64Array<ArrayBufferLike>;
+    chart.setData('lo', x, new Float64Array([0, 1, 2]) as any);
+    chart.setData('hi', x, new Float64Array([100, 200, 300]) as any);
+    chart.hideSeries('hi');
+    chart.draw();
+
+    chart.showSeries('hi');
+    chart.draw();
+
+    expect(chart['gridDomainLeft'].yMax).toBeGreaterThanOrEqual(300);
+  });
+
+  it('legendConfigs omite séries ocultas mas mantém séries sem dados', () => {
+    const chart = new LineChart(canvas, {
+      series: [
+        { id: 'a', name: 'A', color: '#f00' },
+        { id: 'b', name: 'B', color: '#0f0' },
+        { id: 'c', name: 'C', color: '#00f' },
+      ],
+      autoDraw: false,
+    } as any);
+    const x = new Float64Array([0, 1]) as unknown as Float64Array<ArrayBufferLike>;
+    const y = new Float64Array([5, 6]) as unknown as Float64Array<ArrayBufferLike>;
+    chart.setData('a', x, y);
+    chart.setData('b', x, y);
+
+    expect(chart['legendConfigs']().map((c: { id?: string }) => c.id)).toEqual(['a', 'b', 'c']);
+
+    chart.hideSeries('b');
+
+    expect(chart['legendConfigs']().map((c: { id?: string }) => c.id)).toEqual(['a', 'c']);
+  });
+
+  it('série oculta não gera hit no crosshair', () => {
+    const chart = new LineChart(canvas, {
+      series: [
+        { id: 'a', name: 'A', color: '#f00' },
+        { id: 'b', name: 'B', color: '#0f0' },
+      ],
+      autoDraw: false,
+    } as any);
+    const x = new Float64Array([0, 50, 100]) as unknown as Float64Array<ArrayBufferLike>;
+    chart.setData('a', x, new Float64Array([10, 20, 30]) as any);
+    chart.setData('b', x, new Float64Array([40, 50, 60]) as any);
+    chart.draw();
+    chart.hideSeries('b');
+
+    // Validamos os hits pelo callback onHover disparado no draw do crosshair.
+    const plot = chart['plotRect']();
+    let captured: { label: string }[] = [];
+    chart.onHover = (h) => (captured = h);
+    chart['cursorX'] = plot.x + plot.w / 2;
+    chart['cursorY'] = plot.y + plot.h / 2;
+    chart['showCrosshair'] = true;
+    chart['dirty'] = true;
+    chart.draw();
+
+    expect(captured.some((h) => h.label === 'B')).toBe(false);
+    expect(captured.some((h) => h.label === 'A')).toBe(true);
+  });
+});
+
+describe('batch (operações em lote)', () => {
+  let canvas: HTMLCanvasElement;
+
+  beforeEach(() => {
+    canvas = createCanvas();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    canvas.remove();
+    vi.useRealTimers();
+  });
+
+  it('agrupa mutações em um único frame', () => {
+    const chart = new LineChart(canvas, {
+      series: [{ name: 'A', color: '#f00' }],
+      maxPoints: 100,
+      autoDraw: true,
+    } as any);
+
+    const drawSpy = vi.spyOn(chart, 'draw');
+    const rafSpy = vi.spyOn(globalThis, 'requestAnimationFrame');
+
+    chart.batch(() => {
+      chart.append(0, 0, 1);
+      chart.append(0, 1, 2);
+      chart.append(0, 2, 3);
+    });
+
+    // Durante o batch nada desenha; ao sair, uma única rAF é agendada.
+    expect(drawSpy).not.toHaveBeenCalled();
+    expect(rafSpy).toHaveBeenCalledTimes(1);
+
+    rafSpy.mockRestore();
+    drawSpy.mockRestore();
+  });
+
+  it('resume mesmo se o callback lançar', () => {
+    const chart = new LineChart(canvas, {
+      series: [{ name: 'A', color: '#f00' }],
+      autoDraw: false,
+    } as any);
+
+    expect(() =>
+      chart.batch(() => {
+        throw new Error('boom');
+      }),
+    ).toThrow('boom');
+
+    // suspendCount deve ter voltado a 0 (finally).
+    expect(chart['suspendCount']).toBe(0);
+  });
+});

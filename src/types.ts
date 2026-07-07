@@ -20,8 +20,23 @@
  */
 export type DataOwnership = 'copy' | 'borrowed';
 
+/**
+ * Reference to a series: either its 0-based index or its `id`.
+ *
+ * Every data and metric method accepts a `SeriesRef`. A `string` is resolved
+ * to the series whose {@link SeriesConfig.id} matches; a `number` is used as a
+ * direct index.
+ */
+export type SeriesRef = number | string;
+
 /** Per-series visual configuration. */
 export interface SeriesConfig {
+  /**
+   * Stable identifier for this series. When set it must be unique across the
+   * chart's series; duplicate ids are rejected at construction / `addSeries`.
+   * Any data or metric method accepts this id in place of the numeric index.
+   */
+  id?: string;
   /** Display name for legends and the crosshair tooltip. */
   name: string;
   /** Line / dot colour for this series. */
@@ -46,6 +61,12 @@ export interface SeriesConfig {
   yMin?: number;
   /** Fixed Y upper bound for this series only (overrides the grid domain). */
   yMax?: number;
+  /**
+   * When true the series is excluded from rendering, the grid domain, and the
+   * crosshair — as if it had no data. Toggle at runtime via
+   * {@link ChartBase.showSeries} / {@link ChartBase.hideSeries}.
+   */
+  hidden?: boolean;
 }
 
 /** Public configuration for a {@link LineChart} or {@link AreaChart}. */
@@ -109,6 +130,15 @@ export interface ChartOpts {
    */
   maxDots?: number;
 }
+
+/**
+ * Runtime option patch accepted by {@link ChartBase.setOptions}.
+ *
+ * Any subset of the top-level chart options may be supplied. Passing `series`
+ * replaces the per-series config array wholesale (same length expected); to add
+ * or remove series use {@link ChartBase.addSeries} / {@link ChartBase.removeSeries}.
+ */
+export type ChartOptionsPatch = Partial<ChartOpts>;
 
 /** Fully-resolved options (every field present).
  *

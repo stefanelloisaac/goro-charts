@@ -10,5 +10,5 @@ export { LineChart } from './charts/line-chart.ts';
 export { AreaChart } from './charts/area-chart.ts';
 export { ScatterChart } from './charts/scatter-chart.ts';
 export { DARK, LIGHT } from './presets.ts';
-export type { ChartOpts, SeriesConfig, DataOwnership } from './types.ts';
+export type { ChartOpts, ChartOptionsPatch, SeriesConfig, SeriesRef, DataOwnership } from './types.ts';
 export type { SeriesHit } from './render/crosshair.ts';

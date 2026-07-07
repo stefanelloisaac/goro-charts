@@ -28,7 +28,17 @@ import { renderLegend } from '../render/legend.ts';
 import { renderStackedBands } from '../render/stacked-band.ts';
 import { formatNumber } from '../math/format.ts';
 import { pxToX, xToPx } from '../math/scale.ts';
-import type { ChartOpts, ResolvedOpts, SeriesConfig, SeriesView, PlotRect, Domain, DataOwnership } from '../types.ts';
+import type {
+  ChartOpts,
+  ChartOptionsPatch,
+  ResolvedOpts,
+  SeriesConfig,
+  SeriesRef,
+  SeriesView,
+  PlotRect,
+  Domain,
+  DataOwnership,
+} from '../types.ts';
 import type { SeriesHit } from '../render/crosshair.ts';
 
 /** Abstract base for all chart types. */
@@ -37,6 +47,9 @@ export abstract class ChartBase {
   protected surface: Surface;
   protected stores: SeriesStore[];
   protected seriesConfigs: SeriesConfig[];
+
+  /** Resolves a series `id` to its current index. Rebuilt on any structural mutation. */
+  private seriesIndexById = new Map<string, number>();
 
   private gridDomainLeft: Domain = { xMin: 0, xMax: 0, yMin: 0, yMax: 0 };
   private gridDomainRight: Domain = { xMin: 0, xMax: 0, yMin: 0, yMax: 0 };
@@ -107,15 +120,11 @@ export abstract class ChartBase {
     this.surface = new Surface(canvas);
 
     this.stores = this.seriesConfigs.map(() => new SeriesStore());
-    this.hasRightAxis = this.seriesConfigs.some((c) => c.yAxis === 'right');
 
-    // Detect stack groups once — seriesConfigs is frozen from here on.
-    this.stackGroupsAll = this.computeAllStackGroups();
-    this.stackGroupsByAxis = {
-      left: this.computeStackGroupsOnAxis('left'),
-      right: this.computeStackGroupsOnAxis('right'),
-    };
-    this.validateStackGroups();
+    // Compute the id map, right-axis flag, and stack groups. Recomputed by
+    // rebuildSeriesDerived() after any structural mutation (setOptions with a
+    // structural key, addSeries, removeSeries).
+    this.rebuildSeriesDerived();
 
     if (opts?.maxPoints != null && opts.maxPoints > 0) {
       for (const s of this.stores) s.initRing(opts.maxPoints);
@@ -231,8 +240,8 @@ export abstract class ChartBase {
    */
   private updateAriaLabel(): void {
     const nonEmpty = this.stores
-      .map((s, i) => ({ config: this.seriesConfigs[i], count: s.count, last: s.lastValue }))
-      .filter((s) => s.count > 0);
+      .map((s, i) => ({ config: this.seriesConfigs[i], visible: this.isVisible(i), last: s.lastValue }))
+      .filter((s) => s.visible);
 
     let label: string;
     if (nonEmpty.length === 0) {
@@ -251,7 +260,7 @@ export abstract class ChartBase {
    */
   private referenceSeriesIndex(): number {
     for (let i = 0; i < this.stores.length; i++) {
-      if (this.stores[i].count > 0) return i;
+      if (this.isVisible(i)) return i;
     }
     return -1;
   }
@@ -345,61 +354,61 @@ export abstract class ChartBase {
   // ---- Public data API -----------------------------------------------------
 
   /**
-   * Snapshot mode: replace the series at `index` (O(n) extent).
-   * @param index - Series index (0-based)
+   * Snapshot mode: replace the series at `ref` (O(n) extent).
+   * @param ref - Series index or id
    * @param x - X values, must be finite and monotonically increasing
    * @param y - Y values, may contain NaN (reserved for gaps v1.6.0); non-finite other than NaN is rejected
    * @param ownership - `'copy'` (default): store copies the arrays; `'borrowed'`: store keeps caller's arrays by reference (must be treated as immutable)
-   * @throws {Error} if `index` is out of range, length mismatch, empty, non-finite X, or non-monotonic X
+   * @throws {Error} if `ref` is unknown, length mismatch, empty, non-finite X, or non-monotonic X
    */
   setData(
-    index: number,
+    ref: SeriesRef,
     x: Float64Array<ArrayBufferLike>,
     y: Float64Array<ArrayBufferLike>,
     ownership?: DataOwnership,
   ): void {
     if (this.destroyed) return;
     try {
-      this.storeAt(index).setData(x, y, ownership);
+      this.storeAt(ref).setData(x, y, ownership);
     } catch (e) {
-      throw new Error(`series ${index}: ${(e as Error).message}`, { cause: e });
+      throw new Error(`series ${this.refLabel(ref)}: ${(e as Error).message}`, { cause: e });
     }
     this.gridPinned = false;
     this.invalidate();
   }
 
   /**
-   * Ring mode: append one sample to series `index`.
-   * @param index - Series index (0-based)
+   * Ring mode: append one sample to series `ref`.
+   * @param ref - Series index or id
    * @param x - X value (must be finite and monotonically increasing)
    * @param y - Y value (NaN is allowed — reserved for gaps v1.6.0)
    * @throws {Error} if ring mode is not active (maxPoints not set)
-   * @throws {Error} if `index` is out of range, x is not finite, x is non-monotonic, or y is non-finite (NaN allowed)
+   * @throws {Error} if `ref` is unknown, x is not finite, x is non-monotonic, or y is non-finite (NaN allowed)
    */
-  append(index: number, x: number, y: number): void {
+  append(ref: SeriesRef, x: number, y: number): void {
     if (this.destroyed) return;
     try {
-      this.storeAt(index).append(x, y);
+      this.storeAt(ref).append(x, y);
     } catch (e) {
-      throw new Error(`series ${index}: ${(e as Error).message}`, { cause: e });
+      throw new Error(`series ${this.refLabel(ref)}: ${(e as Error).message}`, { cause: e });
     }
     this.invalidate();
   }
 
   /**
-   * Ring mode: append a batch of samples to series `index`.
-   * @param index - Series index (0-based)
+   * Ring mode: append a batch of samples to series `ref`.
+   * @param ref - Series index or id
    * @param xs - X values (must be finite and monotonically increasing)
    * @param ys - Y values (NaN is allowed — reserved for gaps v1.6.0)
    * @throws {Error} if ring mode is not active
-   * @throws {Error} if `index` is out of range, length mismatch, non-finite X, non-monotonic X, or non-finite Y (NaN allowed)
+   * @throws {Error} if `ref` is unknown, length mismatch, non-finite X, non-monotonic X, or non-finite Y (NaN allowed)
    */
-  appendBatch(index: number, xs: ArrayLike<number>, ys: ArrayLike<number>): void {
+  appendBatch(ref: SeriesRef, xs: ArrayLike<number>, ys: ArrayLike<number>): void {
     if (this.destroyed) return;
     try {
-      this.storeAt(index).appendBatch(xs, ys);
+      this.storeAt(ref).appendBatch(xs, ys);
     } catch (e) {
-      throw new Error(`series ${index}: ${(e as Error).message}`, { cause: e });
+      throw new Error(`series ${this.refLabel(ref)}: ${(e as Error).message}`, { cause: e });
     }
     this.invalidate();
   }
@@ -421,6 +430,136 @@ export abstract class ChartBase {
     for (const s of this.stores) s.clear();
     this.gridPinned = false;
     this.stackWarned.clear();
+    this.invalidate();
+  }
+
+  // ---- Runtime options & series management ---------------------------------
+
+  /**
+   * Set of top-level option keys whose change requires recomputing layout /
+   * domain (as opposed to a purely visual repaint). Passing `series` is always
+   * treated as structural.
+   */
+  private static readonly STRUCTURAL_OPTION_KEYS = new Set<keyof ChartOpts>([
+    'series',
+    'padding',
+    'yMin',
+    'yMax',
+    'maxPoints',
+  ]);
+
+  /**
+   * Update chart options at runtime without recreating the chart.
+   *
+   * Visual-only changes (colours, font, crosshair style, tick counts) repaint
+   * without touching the grid domain. Structural changes (`series`, `padding`,
+   * `yMin`/`yMax`, `maxPoints`) recompute the derived caches and re-anchor the
+   * grid so the layout reflows.
+   *
+   * @param patch - Any subset of {@link ChartOpts}. When `series` is supplied
+   *   it replaces the config array (use {@link addSeries} / {@link removeSeries}
+   *   to change the series count).
+   * @throws {Error} if `series` is replaced with a different length, or a
+   *   duplicate `id` is introduced.
+   */
+  setOptions(patch: ChartOptionsPatch): void {
+    if (this.destroyed) return;
+
+    let structural = false;
+    for (const key of Object.keys(patch) as (keyof ChartOpts)[]) {
+      if (ChartBase.STRUCTURAL_OPTION_KEYS.has(key)) structural = true;
+    }
+
+    if (patch.series !== undefined) {
+      if (patch.series.length !== this.seriesConfigs.length) {
+        throw new Error(
+          `setOptions: series length ${patch.series.length} must match current ${this.seriesConfigs.length}; ` +
+            `use addSeries/removeSeries to change the count`,
+        );
+      }
+      this.seriesConfigs = patch.series;
+    }
+
+    // Merge the remaining top-level options (series handled above).
+    const rest: ChartOptionsPatch = { ...patch };
+    delete rest.series;
+    this.opts = { ...this.opts, ...rest };
+
+    if (structural) {
+      this.rebuildSeriesDerived();
+      this.gridPinned = false;
+    }
+    this.invalidate();
+  }
+
+  /**
+   * Append a new series at runtime.
+   * @param config - The series configuration (may carry an `id`).
+   * @returns The new series' index.
+   * @throws {Error} if the `id` duplicates an existing series.
+   */
+  addSeries(config: SeriesConfig): number {
+    if (this.destroyed) return -1;
+    if (config.id !== undefined && this.seriesIndexById.has(config.id)) {
+      throw new Error(`duplicate series id "${config.id}"`);
+    }
+
+    const store = new SeriesStore();
+    if (this.opts.maxPoints > 0) store.initRing(this.opts.maxPoints);
+
+    this.seriesConfigs = [...this.seriesConfigs, config];
+    this.stores = [...this.stores, store];
+    this.rebuildSeriesDerived(); // keeps the id map / stack caches canonical
+    this.gridPinned = false;
+    this.invalidate();
+    return this.stores.length - 1;
+  }
+
+  /**
+   * Remove a series at runtime. Frees its data and reflows the layout.
+   * @param ref - Series index or id.
+   * @throws {Error} if `ref` is unknown.
+   */
+  removeSeries(ref: SeriesRef): void {
+    if (this.destroyed) return;
+    const idx = this.resolveRef(ref);
+
+    this.stores[idx].clear();
+    this.seriesConfigs = this.seriesConfigs.filter((_, i) => i !== idx);
+    this.stores = this.stores.filter((_, i) => i !== idx);
+
+    // The logical keyboard cursor points at the reference series; reset it so a
+    // stale index can't survive the reshuffle.
+    this.cursorLogical = -1;
+
+    this.rebuildSeriesDerived();
+    this.gridPinned = false;
+    this.stackWarned.clear();
+    this.invalidate();
+  }
+
+  /**
+   * Show a previously hidden series (clears its `hidden` flag).
+   * @param ref - Series index or id.
+   */
+  showSeries(ref: SeriesRef): void {
+    this.setSeriesHidden(ref, false);
+  }
+
+  /**
+   * Hide a series: excluded from rendering, the grid domain, and the crosshair.
+   * @param ref - Series index or id.
+   */
+  hideSeries(ref: SeriesRef): void {
+    this.setSeriesHidden(ref, true);
+  }
+
+  private setSeriesHidden(ref: SeriesRef, hidden: boolean): void {
+    if (this.destroyed) return;
+    const idx = this.resolveRef(ref);
+    if (!!this.seriesConfigs[idx].hidden === hidden) return; // no-op
+    this.seriesConfigs[idx] = { ...this.seriesConfigs[idx], hidden };
+    this.gridPinned = false;
     this.invalidate();
   }
 
@@ -459,36 +598,36 @@ export abstract class ChartBase {
   }
 
   /**
-   * Number of points currently in the window for series `index`.
-   * @param index - Series index (0-based)
+   * Number of points currently in the window for series `ref`.
+   * @param ref - Series index or id
    */
-  pointCount(index: number): number {
+  pointCount(ref: SeriesRef): number {
     if (this.destroyed) return 0;
-    return this.stores[index].count;
+    return this.stores[this.resolveRef(ref)].count;
   }
   /**
-   * Current window y minimum for series `index` (O(1)).
-   * @param index - Series index (0-based)
+   * Current window y minimum for series `ref` (O(1)).
+   * @param ref - Series index or id
    */
-  extentMin(index: number): number {
+  extentMin(ref: SeriesRef): number {
     if (this.destroyed) return NaN;
-    return this.stores[index].yMin;
+    return this.stores[this.resolveRef(ref)].yMin;
   }
   /**
-   * Current window y maximum for series `index` (O(1)).
-   * @param index - Series index (0-based)
+   * Current window y maximum for series `ref` (O(1)).
+   * @param ref - Series index or id
    */
-  extentMax(index: number): number {
+  extentMax(ref: SeriesRef): number {
     if (this.destroyed) return NaN;
-    return this.stores[index].yMax;
+    return this.stores[this.resolveRef(ref)].yMax;
   }
   /**
-   * Most recent y value for series `index`, or NaN if empty.
-   * @param index - Series index (0-based)
+   * Most recent y value for series `ref`, or NaN if empty.
+   * @param ref - Series index or id
    */
-  lastValue(index: number): number {
+  lastValue(ref: SeriesRef): number {
     if (this.destroyed) return NaN;
-    return this.stores[index].lastValue;
+    return this.stores[this.resolveRef(ref)].lastValue;
   }
 
   /**
@@ -505,6 +644,22 @@ export abstract class ChartBase {
     if (this.destroyed) return;
     if (this.suspendCount > 0) this.suspendCount--;
     if (this.suspendCount === 0 && this.dirty) this.invalidate();
+  }
+
+  /**
+   * Group several mutations into a single repaint. Drawing is suspended for the
+   * duration of `fn` and resumed afterwards (even if `fn` throws), coalescing
+   * every change into one frame.
+   * @param fn - Callback performing the batched mutations.
+   */
+  batch(fn: () => void): void {
+    if (this.destroyed) return;
+    this.suspendDraw();
+    try {
+      fn();
+    } finally {
+      this.resumeDraw();
+    }
   }
 
   /**
@@ -641,7 +796,7 @@ export abstract class ChartBase {
     ctx.fillStyle = this.opts.bgColor;
     ctx.fillRect(0, 0, cssW, cssH);
 
-    if (this.stores.every((s) => s.count === 0)) return;
+    if (this.stores.every((_, i) => !this.isVisible(i))) return;
 
     this.updateGridDomain();
 
@@ -657,8 +812,8 @@ export abstract class ChartBase {
     // Non-stacked series.
     for (let i = 0; i < this.stores.length; i++) {
       if (stackedIndices.has(i)) continue;
+      if (!this.isVisible(i)) continue;
       const store = this.stores[i];
-      if (store.count === 0) continue;
       this.renderOne(ctx, i, store, store.yArr, plot);
     }
 
@@ -666,16 +821,15 @@ export abstract class ChartBase {
     for (const [, grp] of stackGroups) {
       if (grp.length < 2) {
         for (const idx of grp) {
-          const s = this.stores[idx];
-          if (s.count > 0) this.renderOne(ctx, idx, s, s.yArr, plot);
+          if (this.isVisible(idx)) this.renderOne(ctx, idx, this.stores[idx], this.stores[idx].yArr, plot);
         }
         continue;
       }
       const bandStores: SeriesView[] = [];
       const bandStyles: { lineColor: string; lineWidth: number; fillColor: string; fillOpacity: number }[] = [];
       for (const idx of grp) {
+        if (!this.isVisible(idx)) continue;
         const s = this.stores[idx];
-        if (s.count === 0) continue;
         const cfg = this.seriesConfigs[idx];
         bandStores.push(s);
         bandStyles.push({
@@ -695,7 +849,7 @@ export abstract class ChartBase {
       renderStackedBands(ctx, bandStores, bandStyles, plot, dom);
     }
 
-    renderLegend(ctx, this.seriesConfigs, plot, this.opts);
+    renderLegend(ctx, this.legendConfigs(), plot, this.opts);
   }
 
   /** Render a single series. */
@@ -839,15 +993,19 @@ export abstract class ChartBase {
    * sign exists, or the cumulative `Float64Array` (length = n).
    */
   private accumulateStackGroup(indices: number[]): { posCum: Float64Array | null; negCum: Float64Array | null } {
-    const first = this.stores[indices[0]];
-    const n = first.count;
+    // Only visible members contribute; a hidden series is excluded from the
+    // accumulation (and hence the domain) exactly like an empty one.
+    const visible = indices.filter((idx) => !this.seriesConfigs[idx].hidden);
+    if (visible.length === 0) return { posCum: null, negCum: null };
+
+    const n = this.stores[visible[0]].count;
     if (n === 0) return { posCum: null, negCum: null };
 
     // Validate data-length alignment at runtime. accumulateStackGroup runs
     // multiple times per draw, so warn once per (group, series) pair.
-    for (const idx of indices) {
+    for (const idx of visible) {
       if (this.stores[idx].count !== n && this.stores[idx].count > 0) {
-        const key = `len:${indices.join(',')}:${idx}:${this.stores[idx].count}:${n}`;
+        const key = `len:${visible.join(',')}:${idx}:${this.stores[idx].count}:${n}`;
         if (!this.stackWarned.has(key)) {
           this.stackWarned.add(key);
           console.warn(
@@ -863,7 +1021,7 @@ export abstract class ChartBase {
     let hasPos = false;
     let hasNeg = false;
 
-    for (const idx of indices) {
+    for (const idx of visible) {
       const s = this.stores[idx];
       if (s.count !== n) continue; // skip misaligned series
       let p = s.head;
@@ -907,7 +1065,7 @@ export abstract class ChartBase {
    * the auto logic in either regime.
    */
   private updateGridDomain(): void {
-    if (this.stores.every((s) => s.count === 0)) return;
+    if (this.stores.every((_, i) => !this.isVisible(i))) return;
 
     const userYMin = this.opts.yMin;
     const userYMax = this.opts.yMax;
@@ -974,8 +1132,9 @@ export abstract class ChartBase {
       if (!posCum && !negCum) continue;
       let yMin = Infinity;
       let yMax = -Infinity;
-      // Also collect x extents from the group
+      // Also collect x extents from the group (visible members only)
       for (const idx of grp) {
+        if (!this.isVisible(idx)) continue;
         const s = this.stores[idx];
         if (s.xMin < d.xMin) d.xMin = s.xMin;
         if (s.xMax > d.xMax) d.xMax = s.xMax;
@@ -995,9 +1154,9 @@ export abstract class ChartBase {
     // Non-stacked series on this axis.
     for (let i = 0; i < this.stores.length; i++) {
       if (stacked.has(i)) continue;
-      const s = this.stores[i];
-      if (s.count === 0) continue;
+      if (!this.isVisible(i)) continue;
       if ((this.seriesConfigs[i].yAxis ?? 'left') !== axis) continue;
+      const s = this.stores[i];
       if (s.xMin < d.xMin) d.xMin = s.xMin;
       if (s.xMax > d.xMax) d.xMax = s.xMax;
       if (s.yMin < d.yMin) d.yMin = s.yMin;
@@ -1045,9 +1204,9 @@ export abstract class ChartBase {
     // Non-stacked series on this axis.
     for (let i = 0; i < this.stores.length; i++) {
       if (stacked.has(i)) continue;
-      const s = this.stores[i];
-      if (s.count === 0) continue;
+      if (!this.isVisible(i)) continue;
       if ((this.seriesConfigs[i].yAxis ?? 'left') !== axis) continue;
+      const s = this.stores[i];
       if (s.yMin < d.yMin) {
         d.yMin = s.yMin - yr * 0.1;
         changed = true;
@@ -1062,9 +1221,9 @@ export abstract class ChartBase {
       d.xMin = Infinity;
       d.xMax = -Infinity;
       for (let i = 0; i < this.stores.length; i++) {
-        const s = this.stores[i];
-        if (s.count === 0) continue;
+        if (!this.isVisible(i)) continue;
         if ((this.seriesConfigs[i].yAxis ?? 'left') !== axis) continue;
+        const s = this.stores[i];
         if (s.xMin < d.xMin) d.xMin = s.xMin;
         if (s.xMax > d.xMax) d.xMax = s.xMax;
       }
@@ -1078,8 +1237,9 @@ export abstract class ChartBase {
   private refreshXDomain(): void {
     let xMin = Infinity;
     let xMax = -Infinity;
-    for (const s of this.stores) {
-      if (s.count === 0) continue;
+    for (let i = 0; i < this.stores.length; i++) {
+      if (!this.isVisible(i)) continue;
+      const s = this.stores[i];
       if (s.xMin < xMin) xMin = s.xMin;
       if (s.xMax > xMax) xMax = s.xMax;
     }
@@ -1113,10 +1273,74 @@ export abstract class ChartBase {
     });
   }
 
-  private storeAt(index: number): SeriesStore {
-    const s = this.stores[index];
-    if (!s) throw new Error(`series index ${index} out of range (${this.stores.length} series)`);
-    return s;
+  private storeAt(ref: SeriesRef): SeriesStore {
+    return this.stores[this.resolveRef(ref)];
+  }
+
+  /**
+   * Resolve a {@link SeriesRef} to a valid 0-based index.
+   * @throws {Error} if a string id is unknown or a numeric index is out of range.
+   */
+  private resolveRef(ref: SeriesRef): number {
+    if (typeof ref === 'string') {
+      const idx = this.seriesIndexById.get(ref);
+      if (idx === undefined) throw new Error(`series id "${ref}" not found`);
+      return idx;
+    }
+    if (!Number.isInteger(ref) || ref < 0 || ref >= this.stores.length) {
+      throw new Error(`series index ${ref} out of range (${this.stores.length} series)`);
+    }
+    return ref;
+  }
+
+  /** Human-readable label for a ref, used in error messages (quotes ids). */
+  private refLabel(ref: SeriesRef): string {
+    return typeof ref === 'string' ? `"${ref}"` : `${ref}`;
+  }
+
+  /**
+   * Recompute everything derived from {@link seriesConfigs}: the id→index map,
+   * the right-axis flag, and the cached stack groups. Idempotent — called from
+   * the constructor and after every structural mutation.
+   * @throws {Error} if two series share the same `id`.
+   */
+  private rebuildSeriesDerived(): void {
+    this.seriesIndexById = new Map();
+    for (let i = 0; i < this.seriesConfigs.length; i++) {
+      const id = this.seriesConfigs[i].id;
+      if (id === undefined) continue;
+      if (this.seriesIndexById.has(id)) {
+        throw new Error(`duplicate series id "${id}"`);
+      }
+      this.seriesIndexById.set(id, i);
+    }
+
+    this.hasRightAxis = this.seriesConfigs.some((c) => c.yAxis === 'right');
+
+    this.stackGroupsAll = this.computeAllStackGroups();
+    this.stackGroupsByAxis = {
+      left: this.computeStackGroupsOnAxis('left'),
+      right: this.computeStackGroupsOnAxis('right'),
+    };
+    this.validateStackGroups();
+  }
+
+  /**
+   * Whether series `i` participates in rendering, the grid domain, and the
+   * crosshair. A hidden series (or one with no data) is excluded everywhere,
+   * exactly as an empty series always was.
+   */
+  private isVisible(i: number): boolean {
+    return !this.seriesConfigs[i].hidden && this.stores[i].count > 0;
+  }
+
+  /**
+   * Series shown in the legend. Hidden series are omitted, but series with no
+   * data remain listed so a newly configured series does not disappear before
+   * its first sample arrives.
+   */
+  private legendConfigs(): SeriesConfig[] {
+    return this.seriesConfigs.filter((c) => !c.hidden);
   }
 
   /**

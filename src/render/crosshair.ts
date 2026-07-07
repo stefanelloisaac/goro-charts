@@ -43,6 +43,7 @@ export function computeHits(
   const hits: SeriesHit[] = [];
 
   for (let s = 0; s < views.length; s++) {
+    if (configs[s].hidden) continue;
     const view = views[s];
     const n = view.count;
     if (n === 0) continue;

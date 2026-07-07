@@ -5,6 +5,58 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] — 2026-07-07
+
+### Behavior fixes
+
+- **Crosshair sync into stacked AreaChart now works both ways.**
+  Syncing a `LineChart` into a stacked `AreaChart` (and vice-versa) previously
+  failed for the stacked target: the injected crosshair either read the wrong
+  value or drew nothing. `buildCrosshairViews` now builds the cumulative `yArr`
+  in **physical layout** (length = `cap`), so `computeHits` addresses it through
+  `physOf` correctly even after the ring buffer wraps (`head !== 0`).
+  _(minor, behavior fix)_
+- **Injected `cursorY` is clamped to the plot rect.**
+  A synced crosshair whose derived Y fell outside the plot bounds made
+  `renderCrosshair` bail silently, so the target chart showed no line. The
+  injected `cursorY` is now clamped to `[plot.y, plot.y + plot.h]`.
+  _(minor, behavior fix)_
+- **Stacked crosshair dots align with the drawn bands.**
+  The crosshair accumulation now mirrors `renderStackedBands` (running sum in
+  draw order) instead of the split positive/negative tracks, so the marker dots
+  sit on the real band edges. _(minor, behavior fix)_
+- **`onHover([])` fires on leave.**
+  Leaving a chart (directly or via a synced peer) now emits an empty hover so
+  external tooltips can clear their state, instead of keeping the last values.
+  _(minor, behavior fix)_
+
+### Added
+
+- **Series ids.** Every series may declare a stable `id`. All data and metric
+  methods now accept a `SeriesRef` (`number | string`) — the numeric index or
+  the id. Duplicate ids are rejected at construction and by `addSeries`; error
+  messages quote the offending id.
+- **`setOptions(patch)`.** Update options at runtime without recreating the
+  chart. Visual keys (colours, font, crosshair, tick counts) repaint only;
+  structural keys (`series`, `padding`, `yMin`/`yMax`, `maxPoints`) reflow the
+  layout and re-anchor the grid.
+- **Add / remove / show / hide series.** `addSeries(config)` (returns the new
+  index), `removeSeries(ref)`, `showSeries(ref)`, `hideSeries(ref)`. A hidden
+  series is excluded from rendering, the grid domain, and the crosshair — as if
+  it had no data.
+- **`batch(fn)`.** Groups several mutations into a single repaint, resuming the
+  draw scheduler even if the callback throws.
+- `SeriesConfig.id`, `SeriesConfig.hidden`, and the `SeriesRef` / `ChartOptionsPatch`
+  types are exported from the package entry point.
+
+### Changed
+
+- Data and metric method signatures take `ref: SeriesRef` instead of
+  `index: number` (index calls remain valid — `number` is part of `SeriesRef`).
+- Demo simplified: charts are created directly (`new LineChart(...)`) with the
+  panels/metrics/format helpers removed, and the DOM hover strip was dropped
+  from `index.html` in favour of the on-canvas crosshair tooltip.
+
 ## [1.3.0] — 2026-07-06
 
 ### Behavior fixes

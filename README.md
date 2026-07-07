@@ -42,18 +42,18 @@ const canvas = document.querySelector('canvas') as HTMLCanvasElement;
 
 const chart = new LineChart(canvas, {
   series: [
-    { name: 'CPU', color: '#4ea8ff' },
-    { name: 'Temp', color: '#ffb454', lineWidth: 1.2 },
+    { id: 'cpu', name: 'CPU', color: '#4ea8ff' },
+    { id: 'temp', name: 'Temp', color: '#ffb454', lineWidth: 1.2 },
   ],
   maxPoints: 2000,
   autoDraw: true,
 });
 
-chart.append(0, 0, 52); // CPU  @ x=0
-chart.append(1, 0, 38); // Temp @ x=0
+chart.append('cpu', 0, 52); // CPU  @ x=0
+chart.append('temp', 0, 38); // Temp @ x=0
 
-chart.appendBatch(0, [1, 2, 3], [55, 58, 57]);
-chart.appendBatch(1, [1, 2, 3], [39, 40, 39]);
+chart.appendBatch('cpu', [1, 2, 3], [55, 58, 57]);
+chart.appendBatch('temp', [1, 2, 3], [39, 40, 39]);
 ```
 
 ---
@@ -176,21 +176,67 @@ Every data method takes a **series index** as the first argument. `setMaxPoints(
 
 ```ts
 // Safe default — caller can mutate the originals later
-chart.setData(0, x, y);
+chart.setData('cpu', x, y);
 
 // Zero-copy — caller must not mutate x or y after this call
-chart.setData(0, x, y, 'borrowed');
+chart.setData('cpu', x, y, 'borrowed');
 ```
+
+### Referencing series
+
+Every data and metric method accepts a **`SeriesRef`** — either the 0-based
+index or the series' `id`. Give a series a stable `id` and use it everywhere:
+
+```ts
+const chart = new LineChart(canvas, {
+  series: [
+    { id: 'cpu', name: 'CPU', color: '#4ea8ff' },
+    { id: 'mem', name: 'Memory', color: '#52d4a0' },
+  ],
+  maxPoints: 2000,
+  autoDraw: true,
+});
+
+chart.append('cpu', 0, 52);
+chart.pointCount('mem'); // → number of samples in the 'mem' window
+```
+
+Duplicate ids are rejected at construction and by `addSeries`.
 
 ### Read-only properties
 
-| Property            | Type     | Description                        |
-| ------------------- | -------- | ---------------------------------- |
-| `seriesCount`       | `number` | Number of configured series        |
-| `pointCount(index)` | `number` | Samples in the window for a series |
-| `lastValue(index)`  | `number` | Most recent y (NaN if empty)       |
-| `extentMin(index)`  | `number` | Window y minimum (O(1))            |
-| `extentMax(index)`  | `number` | Window y maximum (O(1))            |
+| Property          | Type     | Description                        |
+| ----------------- | -------- | ---------------------------------- |
+| `seriesCount`     | `number` | Number of configured series        |
+| `pointCount(ref)` | `number` | Samples in the window for a series |
+| `lastValue(ref)`  | `number` | Most recent y (NaN if empty)       |
+| `extentMin(ref)`  | `number` | Window y minimum (O(1))            |
+| `extentMax(ref)`  | `number` | Window y maximum (O(1))            |
+
+### Series & options at runtime
+
+| Method              | Description                                                     |
+| ------------------- | --------------------------------------------------------------- |
+| `setOptions(patch)` | Update options in place; visual keys repaint, structural reflow |
+| `addSeries(config)` | Append a series at runtime; returns its index                   |
+| `removeSeries(ref)` | Remove a series and reflow                                      |
+| `showSeries(ref)`   | Un-hide a series                                                |
+| `hideSeries(ref)`   | Exclude a series from render, domain, and crosshair             |
+| `batch(fn)`         | Group mutations into a single frame                             |
+
+```ts
+// Recolour without recomputing the domain
+chart.setOptions({ crosshairColor: '#ffffff' });
+
+// Add, hide, and batch
+const idx = chart.addSeries({ id: 'io', name: 'IO', color: '#f07167' });
+chart.hideSeries('io');
+
+chart.batch(() => {
+  chart.append('cpu', 10, 40);
+  chart.append('mem', 10, 55);
+}); // one repaint
+```
 
 ---
 
@@ -203,8 +249,8 @@ const x = new Float64Array([0, 1, 2, 3, 4]);
 const cpu = new Float64Array([50, 53, 55, 52, 51]);
 const temp = new Float64Array([36, 37, 38, 37, 36]);
 
-chart.setData(0, x, cpu);
-chart.setData(1, x, temp);
+chart.setData('cpu', x, cpu);
+chart.setData('temp', x, temp);
 chart.draw();
 ```
 
@@ -216,14 +262,14 @@ Requires `maxPoints` at construction. Each series gets its own ring buffer. `set
 
 ```ts
 const chart = new LineChart(canvas, {
-  series: [{ name: 'CPU', color: '#4ea8ff' }],
+  series: [{ id: 'cpu', name: 'CPU', color: '#4ea8ff' }],
   maxPoints: 2000,
   autoDraw: true,
 });
 
 let t = 0;
 setInterval(() => {
-  chart.append(0, t, Math.random() * 100);
+  chart.append('cpu', t, Math.random() * 100);
   t++;
 }, 1000);
 ```
@@ -315,8 +361,8 @@ When a series declares `yAxis: 'right'` the chart maintains a separate Y domain 
 ```ts
 const chart = new LineChart(canvas, {
   series: [
-    { name: 'Temp (°C)', color: '#ffb454', yAxis: 'left' },
-    { name: 'Humidity (%)', color: '#4ea8ff', yAxis: 'right' },
+    { id: 'temp', name: 'Temp (°C)', color: '#ffb454', yAxis: 'left' },
+    { id: 'humidity', name: 'Humidity (%)', color: '#4ea8ff', yAxis: 'right' },
   ],
   maxPoints: 2000,
   autoDraw: true,
@@ -335,9 +381,9 @@ group, so the bands sit flush against each other. Meaningful only on an
 ```ts
 const chart = new AreaChart(canvas, {
   series: [
-    { name: 'System', color: '#4ea8ff', stack: 'cpu' },
-    { name: 'User', color: '#52d4a0', stack: 'cpu' },
-    { name: 'IO Wait', color: '#ffb454', stack: 'cpu' },
+    { id: 'sys', name: 'System', color: '#4ea8ff', stack: 'cpu' },
+    { id: 'user', name: 'User', color: '#52d4a0', stack: 'cpu' },
+    { id: 'io', name: 'IO Wait', color: '#ffb454', stack: 'cpu' },
   ],
   maxPoints: 2000,
   autoDraw: true,
@@ -372,15 +418,17 @@ new LineChart(canvas, { ...LIGHT, series: [/* ... */] });
 
 ## Bulk loading
 
-`suspendDraw()` pauses the rAF-coalesced draw scheduler. Pair it with `resumeDraw()` to batch many append / setData calls without intermediate paints. Nestable — pause N times, resume N times.
+`batch(fn)` groups many append / setData calls into a single repaint — drawing is suspended for the callback and resumed afterwards (even if it throws).
 
 ```ts
-chart.suspendDraw();
-for (const batch of batches) {
-  chart.appendBatch(0, batch.x, batch.y);
-}
-chart.resumeDraw(); // one draw, then normal scheduling resumes
+chart.batch(() => {
+  for (const b of batches) {
+    chart.appendBatch('cpu', b.x, b.y);
+  }
+}); // one draw, then normal scheduling resumes
 ```
+
+For manual control, `suspendDraw()` / `resumeDraw()` are also available (nestable — pause N times, resume N times).
 
 ---
 
@@ -392,7 +440,7 @@ Set `yMin` and `yMax` to pin the grid domain to a known range. The grid won't au
 new LineChart(canvas, {
   yMin: 0,
   yMax: 100,
-  series: [{ name: 'CPU', color: '#4ea8ff' }],
+  series: [{ id: 'cpu', name: 'CPU', color: '#4ea8ff' }],
 });
 ```
 
