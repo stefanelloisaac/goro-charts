@@ -92,6 +92,33 @@ describe('computeHits', () => {
     expect(hits[0].yVal).toBe(50);
     expect(hits[1].yVal).toBe(50);
   });
+
+  it('omite hit abaixo do plot', () => {
+    const views = [makeView([0, 100], [-50, -50], 0, 100)];
+    const configs: any = [{ name: 'Below', color: '#f00' }];
+
+    const hits = computeHits(views, configs, plot, 250);
+
+    expect(hits).toHaveLength(0);
+  });
+
+  it('omite hit acima do plot', () => {
+    const views = [makeView([0, 100], [150, 150], 0, 100)];
+    const configs: any = [{ name: 'Above', color: '#f00' }];
+
+    const hits = computeHits(views, configs, plot, 250);
+
+    expect(hits).toHaveLength(0);
+  });
+
+  it('omite hit com y interpolado NaN', () => {
+    const views = [makeView([0, 100], [NaN, NaN], 0, 100)];
+    const configs: any = [{ name: 'Gap', color: '#f00' }];
+
+    const hits = computeHits(views, configs, plot, 250);
+
+    expect(hits).toHaveLength(0);
+  });
 });
 
 const opts: any = {
@@ -140,6 +167,23 @@ describe('renderCrosshair', () => {
     const texts = mc.calls.fillText.map((t) => t[0]);
     expect(texts).toContain('A');
     expect(texts).toContain('B');
+  });
+
+  it('não mostra série fora do plot no card nem no marcador', () => {
+    const mc = createMockCtx();
+    const views = [makeView([0, 100], [50, 50], 0, 100), makeView([0, 100], [-50, -50], 0, 100)];
+    const configs: any = [
+      { name: 'Visible', color: '#f00' },
+      { name: 'Below', color: '#0f0' },
+    ];
+
+    renderCrosshair(mc, views, configs, plot, opts, { x: 250, y: 130 }, 500);
+
+    const texts = mc.calls.fillText.map((t) => t[0]);
+    expect(texts).toContain('Visible');
+    expect(texts).not.toContain('Below');
+    // Uma série válida: halo + marcador + dot da linha no card.
+    expect(mc.calls.arc).toHaveLength(3);
   });
 
   it('posiciona o card à esquerda quando estouraria a borda direita', () => {

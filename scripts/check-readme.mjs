@@ -42,7 +42,7 @@ const readmePath = join(root, 'README.md');
 // import, gives real symbol checking without duplicate-import errors.
 const importHeader = [
   "import { LineChart, AreaChart, ScatterChart, DARK, LIGHT } from 'goro-charts';",
-  "import type { ChartOpts, SeriesConfig, SeriesHit, DataOwnership } from 'goro-charts';",
+  "import type { ChartOpts, SeriesConfig, SeriesHit, DataOwnership, ChartEventListener, ChartEventType } from 'goro-charts';",
 ];
 
 // Ambient symbols that dependent blocks reference without declaring. These are

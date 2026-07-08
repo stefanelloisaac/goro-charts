@@ -3,309 +3,47 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Goro Charts · Streaming Dashboard</title>
-    <style>
-      :root {
-        --bg: #0e0e10;
-        --card: #161618;
-        --card-hi: #1b1b1e;
-        --border: #2a2a2e;
-        --text: #e8e8ea;
-        --muted: #8a8a90;
-        --faint: #5a5a60;
-        --accent: #4ea8ff;
-      }
-
-      * {
-        box-sizing: border-box;
-      }
-
-      html,
-      body {
-        margin: 0;
-        background: var(--bg);
-        color: var(--text);
-        font-family:
-          system-ui,
-          -apple-system,
-          'Segoe UI',
-          sans-serif;
-        -webkit-font-smoothing: antialiased;
-      }
-
-      .wrap {
-        max-width: 1400px;
-        margin: 0 auto;
-        padding: 24px;
-      }
-
-      header {
-        display: flex;
-        align-items: baseline;
-        gap: 16px;
-        margin-bottom: 18px;
-      }
-      header h1 {
-        margin: 0;
-        font-size: 18px;
-        font-weight: 600;
-        letter-spacing: -0.01em;
-      }
-      header .sub {
-        color: var(--muted);
-        font-size: 13px;
-      }
-
-      /* Controls bar */
-      .controls {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 14px 20px;
-        background: var(--card);
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        padding: 14px 18px;
-        margin-bottom: 16px;
-      }
-      .ctrl {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-      }
-      .ctrl label {
-        font-size: 11px;
-        color: var(--muted);
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
-      }
-      .ctrl .row {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-      .ctrl input[type='range'] {
-        width: 130px;
-        accent-color: var(--accent);
-      }
-      .ctrl .num {
-        font-size: 13px;
-        font-variant-numeric: tabular-nums;
-        min-width: 56px;
-        color: var(--text);
-      }
-      .spacer {
-        flex: 1;
-      }
-
-      .btns {
-        display: flex;
-        gap: 8px;
-      }
-      button {
-        font: inherit;
-        font-size: 13px;
-        color: var(--text);
-        background: var(--card-hi);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 8px 16px;
-        cursor: pointer;
-        transition:
-          background 0.12s ease,
-          border-color 0.12s ease;
-      }
-      button:hover {
-        background: #232327;
-        border-color: #3a3a40;
-      }
-      button:active {
-        transform: translateY(1px);
-      }
-      button.primary {
-        background: var(--accent);
-        border-color: var(--accent);
-        color: #06121f;
-        font-weight: 600;
-      }
-      button.primary:hover {
-        background: #6cb8ff;
-      }
-
-      /* KPI row */
-      .kpis {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 16px;
-        margin-bottom: 16px;
-      }
-      .kpi {
-        background: var(--card);
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        padding: 14px 16px;
-      }
-      .kpi .label {
-        font-size: 12px;
-        color: var(--muted);
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
-      }
-      .kpi .value {
-        font-size: 26px;
-        font-weight: 600;
-        letter-spacing: -0.02em;
-        margin: 6px 0 4px;
-        font-variant-numeric: tabular-nums;
-      }
-      .kpi .range {
-        font-size: 12px;
-        color: var(--faint);
-        font-variant-numeric: tabular-nums;
-      }
-
-      /* Panel grid */
-      .grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr 1fr;
-        gap: 16px;
-        margin-bottom: 16px;
-      }
-      .panel {
-        background: var(--card);
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        padding: 14px 16px 8px;
-        display: flex;
-        flex-direction: column;
-      }
-      .panel .head {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        margin-bottom: 10px;
-      }
-      .panel .dot {
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        flex: none;
-      }
-      .panel .title {
-        font-size: 13px;
-        font-weight: 500;
-      }
-      .panel .badge {
-        margin-left: auto;
-        font-size: 11px;
-        color: var(--muted);
-        background: var(--card-hi);
-        border: 1px solid var(--border);
-        border-radius: 6px;
-        padding: 2px 7px;
-        font-variant-numeric: tabular-nums;
-      }
-      .panel canvas {
-        display: block;
-        width: 100%;
-        height: 220px;
-      }
-
-      footer {
-        color: var(--faint);
-        font-size: 12px;
-        text-align: center;
-        padding: 8px 0 4px;
-      }
-
-      @media (max-width: 1100px) {
-        .kpis {
-          grid-template-columns: repeat(2, 1fr);
-        }
-        .grid {
-          grid-template-columns: 1fr 1fr;
-        }
-      }
-      @media (max-width: 860px) {
-        .kpis {
-          grid-template-columns: repeat(2, 1fr);
-        }
-        .grid {
-          grid-template-columns: 1fr;
-        }
-      }
-    </style>
+    <title>Goro Charts · Dual Instrument Showcase</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./demo/styles.css" />
   </head>
-  <body>
+  <body class="dark">
+    <svg class="grain">
+      <filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="3" /></filter>
+      <rect width="100%" height="100%" filter="url(#n)" />
+    </svg>
+
     <div class="wrap">
       <header>
-        <h1>Goro Charts</h1>
-        <span class="sub">streaming dashboard · live data with crosshair sync</span>
+        <div class="brand">
+          <div class="mark"><span class="sq"></span>GORO<b>&#9656;</b>CHARTS</div>
+        </div>
+        <span class="tag">Two independent instruments &middot; compare side by side</span>
+        <span class="ver">v1.5.0</span>
+        <div class="spacer"></div>
+        <div class="hlinks">
+          <span class="iconbtn" id="copyAB" title="Clone panel A config into B">A &rarr; B</span>
+          <span class="iconbtn" id="copyBA" title="Clone panel B config into A">B &rarr; A</span>
+          <span class="iconbtn on" id="syncBtn" title="Link the two crosshairs">&#9741; Sync</span>
+          <a href="https://github.com/stefanelloisaac/goro-charts" target="_blank" rel="noopener">GitHub</a>
+          <span class="iconbtn" id="themeBtn">&#9788; Theme</span>
+        </div>
       </header>
 
-      <section class="controls">
-        <div class="ctrl">
-          <label>Interval</label>
-          <div class="row">
-            <input type="range" id="interval" min="0" max="2000" step="50" value="1000" />
-            <span class="num" id="intervalVal">1000 ms</span>
-          </div>
-        </div>
-        <div class="spacer"></div>
-        <div class="btns">
-          <button class="primary" id="toggle">Pause</button>
-          <button id="reset">Reset</button>
-        </div>
-      </section>
+      <div class="stage" id="stage"></div>
 
-      <section class="kpis" id="kpis">
-        <div class="kpi">
-          <div class="label">CPU</div>
-          <div class="value">—</div>
-          <div class="range">—</div>
-        </div>
-        <div class="kpi">
-          <div class="label">Req/s</div>
-          <div class="value">—</div>
-          <div class="range">—</div>
-        </div>
-        <div class="kpi">
-          <div class="label">Network</div>
-          <div class="value">—</div>
-          <div class="range">—</div>
-        </div>
-      </section>
-
-      <section class="grid" id="grid">
-        <div class="panel">
-          <div class="head">
-            <span class="dot" style="background: #4ea8ff"></span>
-            <span class="title">CPU + Req/s (dual Y)</span>
-            <span class="badge">—</span>
-          </div>
-          <canvas></canvas>
-        </div>
-        <div class="panel">
-          <div class="head">
-            <span class="dot" style="background: #52d4a0"></span>
-            <span class="title">Requests (stacked area)</span>
-            <span class="badge">—</span>
-          </div>
-          <canvas></canvas>
-        </div>
-        <div class="panel">
-          <div class="head">
-            <span class="dot" style="background: #f07167"></span>
-            <span class="title">Network Activity</span>
-            <span class="badge">—</span>
-          </div>
-          <canvas></canvas>
-        </div>
-      </section>
-
-      <footer id="footer"></footer>
+      <div class="foot">
+        Built with
+        <a href="https://github.com/stefanelloisaac/goro-charts" target="_blank" rel="noopener">goro-charts</a> &mdash;
+        each panel is a separate live instance of the real library, independently configurable.
+      </div>
     </div>
 
-    <script type="module" src="./demo/main.ts"></script>
+    <script type="module" src="./demo/main.js"></script>
   </body>
 </html>

@@ -25,6 +25,8 @@ Minimal high-performance chart engine. **Canvas 2D only. Zero runtime dependenci
 - `devicePixelRatio`-aware for sharp retina rendering
 - Offscreen static layer — crosshair repaint is instant
 - Built-in legend and multi-series crosshair with an interpolated tooltip card
+- `appendFrame` — atomically stream one sample per series with automatic carry-forward
+- Typed events (`frameappended`, `destroy`) with add/remove listeners
 - `ResizeObserver` auto-sizing, `rAF`-coalesced auto-draw
 
 ```bash
@@ -159,6 +161,7 @@ Every data method takes a **series index** as the first argument. `setMaxPoints(
 | `setData`      | `(seriesIndex, x: Float64Array, y: Float64Array, ownership?: 'copy' \| 'borrowed')` | Snapshot: replace a series. O(n) extent. Ownership: `'copy'` (default, safe) copies arrays; `'borrowed'` keeps caller's reference (must be treated as immutable). |
 | `append`       | `(seriesIndex, x: number, y: number)`                                               | Ring: append one point. O(1) amortized.                                                                                                                           |
 | `appendBatch`  | `(seriesIndex, xs: ArrayLike<number>, ys: ArrayLike<number>)`                       | Ring: append a batch. O(k).                                                                                                                                       |
+| `appendFrame`  | `(x: number, values: Map<SeriesRef, number> \| Record<string, number>)`             | Ring: atomically append one sample per series. Absent series receive carry-forward.                                                                               |
 | `setMaxPoints` | `(maxPoints: number)`                                                               | Resize the streaming window for all series.                                                                                                                       |
 | `clear`        | `()`                                                                                | Empty all series and reset the grid domain.                                                                                                                       |
 | `draw`         | `()`                                                                                | Manual paint. No-op when clean and no crosshair.                                                                                                                  |
@@ -273,6 +276,64 @@ setInterval(() => {
   t++;
 }, 1000);
 ```
+
+### Atomic multi-series frames
+
+When streaming multiple series, use `appendFrame` to keep every series aligned at a shared `x`. Series absent from the map receive a carry‑forward of their last value so the window stays synchronised frame‑by‑frame:
+
+```ts
+const chart = new LineChart(canvas, {
+  series: [
+    { id: 'cpu', name: 'CPU', color: '#4ea8ff' },
+    { id: 'mem', name: 'Memory', color: '#52d4a0' },
+    { id: 'net', name: 'Network', color: '#f07167' },
+  ],
+  maxPoints: 2000,
+  autoDraw: true,
+});
+
+let t = 0;
+setInterval(() => {
+  chart.appendFrame(t, {
+    cpu: Math.random() * 100,
+    mem: Math.random() * 100,
+    // 'net' absent → carrega forward o último y
+  });
+  t++;
+}, 1000);
+```
+
+## Events
+
+Register typed listeners for chart lifecycle and streaming events. Listeners are automatically cleaned up on `destroy()`.
+
+```ts
+chart.on('frameappended', (ev) => {
+  console.log(`${ev.seriesUpdated} series updated, render=${ev.render}`);
+});
+
+chart.on('destroy', () => {
+  console.log('chart destroyed');
+});
+
+// Remove a specific listener — on() returns the same listener you passed,
+// so store it to call off() later.
+const myHandler: ChartEventListener<'frameappended'> = (ev) => {
+  console.log(`${ev.seriesUpdated} series updated, render=${ev.render}`);
+};
+chart.on('frameappended', myHandler);
+
+chart.on('destroy', () => {
+  console.log('chart destroyed');
+});
+
+chart.off('frameappended', myHandler);
+```
+
+| Event           | Payload                                      | When                              |
+| --------------- | -------------------------------------------- | --------------------------------- |
+| `frameappended` | `{ seriesUpdated: number; render: boolean }` | After every `appendFrame` call    |
+| `destroy`       | `{}`                                         | Once, just before listeners clear |
 
 ---
 

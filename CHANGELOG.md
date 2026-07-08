@@ -5,6 +5,43 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] — 2026-07-07
+
+### Added
+
+- **`appendFrame(x, values)`.** Atomically append one sample per series in a
+  single frame. Accepts `Map<SeriesRef, number>` or `Record<string, number>`.
+  Series absent from the frame receive a carry-forward of their last `y` so
+  every active series stays ring-aligned frame-by-frame (including hidden
+  series). Validation runs on the entire frame before any series is mutated,
+  so a failing frame leaves every series unchanged.
+- **Typed events.** `on(type, fn)` / `off(type, fn)` for chart lifecycle and
+  streaming events. `frameappended` fires after each frame; `destroy` fires
+  once before listeners are cleaned up. Listeners are typed and removable.
+- **Invalidation model.** Dirty flags now separate layout/data changes
+  (`dirtyLayout`) from visual-only changes (`dirtyPaint`). `setOptions` and
+  internal mutations choose the cheapest invalidation: a colour change
+  repaints without recomputing the grid domain. The draw routine only
+  re-runs `updateGridDomain()` when `dirtyLayout` is true.
+- **`makeView` unified.** The proxy-view construction that was duplicated in
+  `renderOne` and `buildCrosshairViews` is now a single private `makeView`
+  method, ready for the v1.7.0 viewport.
+- Types `ChartFrameValues`, `ChartEventMap`, `ChartEventType`,
+  `ChartEventListener`, `FrameAppendedEvent`, and `ChartDestroyedEvent` are
+  exported from the package entry point.
+
+### Changed
+
+- `appendFrame` API changed from `Map<SeriesRef, { x, y }>` to
+  `appendFrame(x: number, values: ChartFrameValues)` — a single `x` plus
+  ref→y map, matching the documented vision. _(breaking change for any early
+  adopter of the original signature; the old `ChartFrame` / `ChartFramePoint`
+  types are removed.)_
+- `destroy()` emits the `'destroy'` event **before** setting `destroyed=true`
+  and clearing listeners, so destroy listeners actually fire.
+- Canvas resize handler (`onResize`) now sets `dirtyLayout = true` directly
+  instead of calling `invalidate()`, matching the layout/paint separation.
+
 ## [1.4.0] — 2026-07-07
 
 ### Behavior fixes

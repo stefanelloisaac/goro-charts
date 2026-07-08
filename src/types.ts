@@ -196,3 +196,39 @@ export interface SeriesView extends Domain {
    */
   bracketLogical(target: number): number;
 }
+
+// ---- Streaming & events (v1.5.0) -------------------------------------------
+
+/**
+ * Value map for {@link ChartBase.appendFrame}.
+ *
+ * Accepts a `Map<SeriesRef, number>` (index or id refs) or a plain
+ * `Record<string, number>` (id → y). All entries share the same frame `x`.
+ * Series absent from the map receive a carry-forward of their last `y` at the
+ * frame's `x` so every active series stays ring-aligned frame-by-frame.
+ * Series that have never received data are skipped until their first real
+ * sample.
+ */
+export type ChartFrameValues = ReadonlyMap<SeriesRef, number> | Record<string, number>;
+
+/** Payload emitted after a frame is appended. */
+export interface FrameAppendedEvent {
+  /** Number of series that received data (updated + carry-forward). */
+  seriesUpdated: number;
+  /** Whether the frame triggered a render (false when `autoDraw` is off or drawing is suspended). */
+  render: boolean;
+}
+
+/** Payload emitted when the chart is destroyed. Reserved for future fields. */
+export type ChartDestroyedEvent = Record<string, never>;
+
+/** Event map for typed listeners. */
+export interface ChartEventMap {
+  frameappended: FrameAppendedEvent;
+  destroy: ChartDestroyedEvent;
+}
+
+export type ChartEventType = keyof ChartEventMap;
+
+/** Typed listener for chart events. */
+export type ChartEventListener<K extends ChartEventType> = (ev: ChartEventMap[K]) => void;

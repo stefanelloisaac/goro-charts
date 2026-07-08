@@ -63,10 +63,19 @@ export function computeHits(
     else if (t > 1) t = 1;
     const xVal = x0 + (x1 - x0) * t;
     const yVal = y0 + (y1 - y0) * t;
+    const px = xToPx(xVal, view, plot);
+    const py = yToPx(yVal, view, plot);
+
+    // A hit only exists when its marker would be visible inside the plot.
+    // This keeps marker dots, tooltip rows, onHover, and live-region output
+    // consistent with what the chart actually renders in the plot area.
+    if (!Number.isFinite(yVal) || !Number.isFinite(px) || !Number.isFinite(py)) continue;
+    if (px < plot.x || px > plot.x + plot.w) continue;
+    if (py < plot.y || py > plot.y + plot.h) continue;
 
     hits.push({
-      px: xToPx(xVal, view, plot),
-      py: yToPx(yVal, view, plot),
+      px,
+      py,
       xVal,
       yVal,
       color: configs[s].color,

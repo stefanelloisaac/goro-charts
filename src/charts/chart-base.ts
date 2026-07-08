@@ -38,6 +38,10 @@ import type {
   PlotRect,
   Domain,
   DataOwnership,
+  ChartEventMap,
+  ChartEventType,
+  ChartEventListener,
+  ChartFrameValues,
 } from '../types.ts';
 import type { SeriesHit } from '../render/crosshair.ts';
 
@@ -70,7 +74,16 @@ export abstract class ChartBase {
    */
   private stackWarned = new Set<string>();
 
-  private dirty = false;
+  /** Data / layout / domain change — requires full static render + domain recompute. */
+  private dirtyLayout = false;
+  /** Visual-only change (colours, font, line style) — repaint without domain recompute. */
+  private dirtyPaint = false;
+
+  /** Typed event listeners registered via {@link on}. Cleared in {@link destroy}. */
+  private listeners: Record<ChartEventType, Set<ChartEventListener<ChartEventType>>> = {
+    frameappended: new Set(),
+    destroy: new Set(),
+  };
   private cursorX = -1;
   private cursorY = -1;
   private showCrosshair = false;
@@ -138,7 +151,7 @@ export abstract class ChartBase {
       this.gridPinned = true;
     }
 
-    this.dirty = true;
+    this.dirtyLayout = true;
     this.attachEvents();
     this.applySystemTheme();
     this.ensureLiveRegion();
@@ -414,6 +427,98 @@ export abstract class ChartBase {
   }
 
   /**
+   * Ring mode: atomically append one sample per series in a single frame.
+   *
+   * **Alignment rule:** when a series is absent from `values` but has received
+   * data before, its last `y` is carried forward at the common frame `x` so
+   * every active series stays ring-aligned frame-by-frame (including hidden
+   * series, so they re-appear in sync). Series that have never received data
+   * are skipped.
+   *
+   * Validation is performed on the entire frame before any series is mutated,
+   * so a failing frame leaves every series unchanged (atomic).
+   *
+   * @param x - Common x for all entries in this frame. Must be finite and
+   *   monotonically increasing relative to each series' last x.
+   * @param values - Map or record keyed by {@link SeriesRef} → y.
+   *   Accepts `Map<SeriesRef, number>` or `Record<string, number>` (id → y).
+   *   Refs that resolve to the same series are rejected.
+   * @throws {Error} if ring mode is not active (`maxPoints` not set)
+   * @throws {Error} if x is not finite
+   * @throws {Error} if any ref is unknown, y is non-finite (NaN allowed),
+   *   x is non-monotonic for a series, or the same series appears twice
+   */
+  appendFrame(x: number, values: ChartFrameValues): void {
+    if (this.destroyed) return;
+    const { maxPoints } = this.opts;
+    if (maxPoints <= 0) throw new Error('appendFrame requires ring mode (maxPoints not set)');
+
+    // ---- normalise values into uniform entries -------------------------------
+    const entries: { ref: SeriesRef; y: number }[] = [];
+    if (values instanceof Map) {
+      for (const [ref, y] of values) entries.push({ ref, y });
+    } else {
+      for (const [id, y] of Object.entries(values)) entries.push({ ref: id, y });
+    }
+    if (entries.length === 0) return;
+
+    if (!Number.isFinite(x)) {
+      throw new Error(`appendFrame x=${x} is not finite`);
+    }
+
+    // ---- Phase 1: resolve + validate every entry (no mutation yet) ----------
+    const parsed: { idx: number; y: number }[] = [];
+    const present = new Set<number>(); // guard against duplicate series refs
+    for (let i = 0; i < entries.length; i++) {
+      const { ref, y } = entries[i];
+      const idx = this.resolveRef(ref);
+      const s = this.stores[idx];
+
+      if (!s.isRing) {
+        throw new Error(
+          `appendFrame series ${this.refLabel(ref)}: ring mode not active. ` +
+            `Create the chart with { maxPoints } to enable streaming.`,
+        );
+      }
+      if (!(Number.isFinite(y) || Number.isNaN(y))) {
+        throw new Error(`appendFrame y=${y} at entry ${i} is not finite`);
+      }
+      if (s.count > 0 && x < s.xMax) {
+        throw new Error(
+          `appendFrame series ${this.refLabel(ref)}: x=${x} < last x=${s.xMax}; x must be monotonically increasing`,
+        );
+      }
+      if (present.has(idx)) {
+        throw new Error(`appendFrame: duplicate series ref "${this.refLabel(ref)}" (resolves to same index ${idx})`);
+      }
+      present.add(idx);
+      parsed.push({ idx, y });
+    }
+
+    // ---- Phase 2: carry-forward absent active series (incl. hidden) ---------
+    let carried = 0;
+    for (let i = 0; i < this.stores.length; i++) {
+      if (present.has(i)) continue; // present in frame
+      const s = this.stores[i];
+      if (!s.isRing || s.count === 0) continue; // not ring or empty — skip
+      if (x <= s.xMax) continue; // would violate monotonicity
+      s.append(x, s.lastValue);
+      carried++;
+    }
+
+    // ---- Phase 3: push validated entries ------------------------------------
+    for (const { idx, y } of parsed) {
+      this.stores[idx].append(x, y);
+    }
+
+    // ---- Phase 4: one invalidation, one event -------------------------------
+    const seriesUpdated = parsed.length + carried;
+    this.invalidate('layout');
+    const render = this.autoDraw && this.suspendCount === 0;
+    this.emit('frameappended', { seriesUpdated, render });
+  }
+
+  /**
    * Resize the streaming window (applies to all series).
    * Preserves the most recent samples in each series.
    * @param maxPoints - New window size (must be >= 1)
@@ -489,7 +594,7 @@ export abstract class ChartBase {
       this.rebuildSeriesDerived();
       this.gridPinned = false;
     }
-    this.invalidate();
+    this.invalidate(structural ? 'layout' : 'paint');
   }
 
   /**
@@ -643,7 +748,7 @@ export abstract class ChartBase {
   resumeDraw(): void {
     if (this.destroyed) return;
     if (this.suspendCount > 0) this.suspendCount--;
-    if (this.suspendCount === 0 && this.dirty) this.invalidate();
+    if (this.suspendCount === 0 && (this.dirtyLayout || this.dirtyPaint)) this.invalidate();
   }
 
   /**
@@ -694,6 +799,41 @@ export abstract class ChartBase {
     other.syncTargets.delete(this);
   }
 
+  // ---- Events (v1.5.0) -----------------------------------------------------
+
+  /**
+   * Register a typed listener for chart lifecycle and streaming events.
+   * Listeners are automatically removed in {@link destroy}.
+   * @param type - Event type (e.g. `'frameappended'`, `'destroy'`).
+   * @param fn - Typed listener callback.
+   */
+  on<K extends ChartEventType>(type: K, fn: ChartEventListener<K>): void {
+    if (this.destroyed) return;
+    this.listeners[type].add(fn as ChartEventListener<ChartEventType>);
+  }
+
+  /**
+   * Remove a previously registered listener.
+   * @param type - Event type.
+   * @param fn - The exact function reference passed to {@link on}.
+   */
+  off<K extends ChartEventType>(type: K, fn: ChartEventListener<K>): void {
+    if (this.destroyed) return;
+    this.listeners[type].delete(fn as ChartEventListener<ChartEventType>);
+  }
+
+  /**
+   * Dispatch a typed event to every registered listener for `type`.
+   * Subclasses and internal methods call this to publish lifecycle changes
+   * without exposing a raw event emitter.
+   */
+  protected emit<K extends ChartEventType>(type: K, ev: ChartEventMap[K]): void {
+    if (this.destroyed) return;
+    const set = this.listeners[type];
+    if (!set) return;
+    for (const fn of set) fn(ev);
+  }
+
   /**
    * External callback for hover events. Called on `mousemove` with the
    * interpolated data for every visible series. Use to build custom DOM
@@ -707,8 +847,9 @@ export abstract class ChartBase {
   /** Paint the chart. Cheap to call repeatedly: returns early when clean. */
   draw(): void {
     if (this.destroyed) return;
+    const dirty = this.dirtyLayout || this.dirtyPaint;
     // Nothing to paint and no stale crosshair to clean — bail early.
-    if (!this.dirty && !this.showCrosshair && !this.crosshairPainted) return;
+    if (!dirty && !this.showCrosshair && !this.crosshairPainted) return;
     const { cssW, cssH } = this.surface;
     if (cssW <= 0 || cssH <= 0) return;
 
@@ -717,14 +858,17 @@ export abstract class ChartBase {
 
     // Crosshair was hidden outside a streaming tick — re-blit the static
     // layer to clear the stale overlay immediately.
-    if (!this.dirty && !this.showCrosshair && this.crosshairPainted) {
+    if (!dirty && !this.showCrosshair && this.crosshairPainted) {
       this.surface.blit();
       this.crosshairPainted = false;
       if (this.onHover) this.onHover([]);
       return;
     }
 
-    if (this.dirty) {
+    if (this.dirtyLayout) {
+      this.updateGridDomain();
+    }
+    if (dirty) {
       this.renderStatic(plot);
       this.updateAriaLabel();
     }
@@ -758,14 +902,19 @@ export abstract class ChartBase {
       this.liveRegion.textContent = '';
     }
 
-    this.dirty = false;
+    this.dirtyLayout = false;
+    this.dirtyPaint = false;
     this.crosshairPainted = this.showCrosshair;
   }
 
   /** Detach observers/listeners and release buffers. Idempotent. */
   destroy(): void {
     if (this.destroyed) return;
+    this.emit('destroy', {});
     this.destroyed = true;
+    // Clear listeners after emit so the destroy event reaches them.
+    this.listeners.frameappended.clear();
+    this.listeners.destroy.clear();
     if (this.rafScheduled) {
       cancelAnimationFrame(this.rafScheduled);
       this.rafScheduled = 0;
@@ -797,8 +946,6 @@ export abstract class ChartBase {
     ctx.fillRect(0, 0, cssW, cssH);
 
     if (this.stores.every((_, i) => !this.isVisible(i))) return;
-
-    this.updateGridDomain();
 
     renderGrid(ctx, this.gridDomainLeft, plot, this.opts);
     renderAxes(ctx, this.gridDomainLeft, plot, this.opts);
@@ -852,6 +999,27 @@ export abstract class ChartBase {
     renderLegend(ctx, this.legendConfigs(), plot, this.opts);
   }
 
+  /**
+   * Create a proxy {@link SeriesView} that overlays a domain and optional
+   * overrides on top of `store`. The proxy preserves the store's prototype chain
+   * so methods (`physOf`, `bracketLogical`) resolve correctly, while `xMin`,
+   * `xMax`, `yMin`, `yMax`, and any override keys shadow the originals.
+   *
+   * This is called from `renderOne` (per-series domain + optional stacked
+   * `yArr`) and from `buildCrosshairViews` (per-series domain + cumulative
+   * `yArr` for stacked series). Keeping it in one place avoids duplication
+   * and gives the v1.7.0 viewport a single construction point.
+   */
+  private makeView(store: SeriesView, domain: Domain, overrides?: Partial<SeriesView>): SeriesView {
+    return Object.assign(Object.create(Object.getPrototypeOf(store)), store, {
+      xMin: domain.xMin,
+      xMax: domain.xMax,
+      yMin: domain.yMin,
+      yMax: domain.yMax,
+      ...overrides,
+    });
+  }
+
   /** Render a single series. */
   private renderOne(
     ctx: CanvasRenderingContext2D,
@@ -877,13 +1045,9 @@ export abstract class ChartBase {
     if (cfg.yMin != null) viewYMin = cfg.yMin;
     if (cfg.yMax != null) viewYMax = cfg.yMax;
 
-    const proxyView: SeriesView = Object.assign(Object.create(Object.getPrototypeOf(store)), store, {
-      xMin: dom.xMin,
-      xMax: dom.xMax,
+    const proxyView = this.makeView(store, { xMin: dom.xMin, xMax: dom.xMax, yMin: viewYMin, yMax: viewYMax }, {
       yArr,
-      yMin: viewYMin,
-      yMax: viewYMax,
-    });
+    } as Partial<SeriesView>);
 
     this.renderSeries(ctx, proxyView, plot, sOpts);
 
@@ -1263,8 +1427,9 @@ export abstract class ChartBase {
   }
 
   /** Mark dirty and schedule/perform a draw per the autoDraw policy. */
-  private invalidate(): void {
-    this.dirty = true;
+  private invalidate(kind: 'layout' | 'paint' = 'layout'): void {
+    if (kind === 'paint') this.dirtyPaint = true;
+    else this.dirtyLayout = true;
     if (!this.autoDraw || this.suspendCount > 0) return;
     if (this.rafScheduled) return;
     this.rafScheduled = requestAnimationFrame(() => {
@@ -1397,13 +1562,11 @@ export abstract class ChartBase {
       if (cfg.yMin != null) viewYMin = cfg.yMin;
       if (cfg.yMax != null) viewYMax = cfg.yMax;
       const accY = stackedSurrogates.get(i);
-      return Object.assign(Object.create(Object.getPrototypeOf(store)), store, {
-        xMin: dom.xMin,
-        xMax: dom.xMax,
-        yMin: viewYMin,
-        yMax: viewYMax,
-        ...(accY ? { yArr: accY } : {}),
-      });
+      return this.makeView(
+        store,
+        { xMin: dom.xMin, xMax: dom.xMax, yMin: viewYMin, yMax: viewYMax },
+        accY ? ({ yArr: accY } as Partial<SeriesView>) : undefined,
+      );
     });
   }
 
@@ -1451,7 +1614,7 @@ export abstract class ChartBase {
 
   private onResize(): void {
     if (this.surface.measure()) {
-      this.dirty = true;
+      this.dirtyLayout = true;
       this.draw();
     }
   }

@@ -408,10 +408,10 @@ describe('prefers-reduced-motion', () => {
     const chart = new LineChart(canvas, { autoDraw: true } as any);
 
     // Fake that the chart is already dirty — invalidate should still schedule
-    chart['dirty'] = false;
+    chart['dirtyLayout'] = false;
     const drawSpy = vi.spyOn(chart as any, 'draw').mockImplementation(() => {});
     chart['invalidate']();
-    expect(chart['dirty']).toBe(true);
+    expect(chart['dirtyLayout']).toBe(true);
 
     drawSpy.mockRestore();
   });
@@ -607,9 +607,9 @@ describe('Stacking (contrato e validação)', () => {
 
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     chart.draw();
-    chart['dirty'] = true;
+    chart['dirtyLayout'] = true;
     chart.draw();
-    chart['dirty'] = true;
+    chart['dirtyLayout'] = true;
     chart.draw();
     // Apesar de 3 draws, o aviso de desalinhamento aparece uma única vez.
     const skipCalls = warn.mock.calls.filter((c) => String(c[0]).includes('skipped series'));
@@ -1175,7 +1175,7 @@ describe('Add / remove / show / hide de séries', () => {
     chart['cursorX'] = plot.x + plot.w / 2;
     chart['cursorY'] = plot.y + plot.h / 2;
     chart['showCrosshair'] = true;
-    chart['dirty'] = true;
+    chart['dirtyLayout'] = true;
     chart.draw();
 
     expect(captured.some((h) => h.label === 'B')).toBe(false);
@@ -1234,5 +1234,429 @@ describe('batch (operações em lote)', () => {
 
     // suspendCount deve ter voltado a 0 (finally).
     expect(chart['suspendCount']).toBe(0);
+  });
+});
+
+describe('appendFrame (v1.5.0)', () => {
+  let canvas: HTMLCanvasElement;
+
+  beforeEach(() => {
+    canvas = createCanvas();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    canvas.remove();
+    vi.useRealTimers();
+  });
+
+  it('atualiza múltiplas séries atomicamente no mesmo x', () => {
+    const chart = new LineChart(canvas, {
+      series: [
+        { id: 'a', name: 'A', color: '#f00' },
+        { id: 'b', name: 'B', color: '#0f0' },
+      ],
+      maxPoints: 100,
+      autoDraw: false,
+    } as any);
+
+    chart.appendFrame(0, { a: 10, b: 20 });
+    chart.appendFrame(1, { a: 11, b: 21 });
+
+    expect(chart.lastValue('a')).toBe(11);
+    expect(chart.lastValue('b')).toBe(21);
+    expect(chart.pointCount('a')).toBe(2);
+    expect(chart.pointCount('b')).toBe(2);
+  });
+
+  it('série ausente com dado anterior recebe carry-forward', () => {
+    const chart = new LineChart(canvas, {
+      series: [
+        { id: 'a', name: 'A', color: '#f00' },
+        { id: 'b', name: 'B', color: '#0f0' },
+      ],
+      maxPoints: 100,
+      autoDraw: false,
+    } as any);
+
+    chart.appendFrame(0, { a: 10, b: 20 });
+    // Só 'a' recebe novo dado; 'b' deve receber carry-forward de 20.
+    chart.appendFrame(1, { a: 11 });
+
+    expect(chart.lastValue('a')).toBe(11);
+    expect(chart.lastValue('b')).toBe(20);
+    expect(chart.pointCount('a')).toBe(2);
+    expect(chart.pointCount('b')).toBe(2); // carry-forward manteve alinhamento
+  });
+
+  it('série nunca inicializada não recebe carry-forward', () => {
+    const chart = new LineChart(canvas, {
+      series: [
+        { id: 'a', name: 'A', color: '#f00' },
+        { id: 'b', name: 'B', color: '#0f0' },
+      ],
+      maxPoints: 100,
+      autoDraw: false,
+    } as any);
+
+    chart.appendFrame(0, { a: 10 });
+    chart.appendFrame(1, { a: 11 });
+
+    // 'b' nunca recebeu dado — deve continuar vazia.
+    expect(chart.pointCount('b')).toBe(0);
+  });
+
+  it('série oculta com dados permanece alinhada (carry-forward)', () => {
+    const chart = new LineChart(canvas, {
+      series: [
+        { id: 'a', name: 'A', color: '#f00' },
+        { id: 'b', name: 'B', color: '#0f0' },
+      ],
+      maxPoints: 100,
+      autoDraw: false,
+    } as any);
+
+    chart.appendFrame(0, { a: 10, b: 20 });
+    chart.hideSeries('b');
+    chart.appendFrame(1, { a: 11 }); // 'b' está oculta, mas recebe carry-forward
+
+    // Ao mostrar 'b' de novo, deve ter 2 pontos alinhados.
+    chart.showSeries('b');
+    expect(chart.pointCount('b')).toBe(2);
+    expect(chart.lastValue('b')).toBe(20);
+  });
+
+  it('refs duplicadas para a mesma série são rejeitadas', () => {
+    const chart = new LineChart(canvas, {
+      series: [
+        { id: 'a', name: 'A', color: '#f00' },
+        { id: 'b', name: 'B', color: '#0f0' },
+      ],
+      maxPoints: 100,
+      autoDraw: false,
+    } as any);
+
+    // Map com índice 0 e id 'a' resolvem para a mesma série.
+    expect(() => {
+      const m = new Map<number | string, number>();
+      m.set(0, 10);
+      m.set('a', 15);
+      chart.appendFrame(0, m);
+    }).toThrow('duplicate series ref');
+  });
+
+  it('ref inválido não muta nenhuma série (atômico)', () => {
+    const chart = new LineChart(canvas, {
+      series: [
+        { id: 'a', name: 'A', color: '#f00' },
+        { id: 'b', name: 'B', color: '#0f0' },
+      ],
+      maxPoints: 100,
+      autoDraw: false,
+    } as any);
+
+    chart.appendFrame(0, { a: 10 });
+
+    expect(() => chart.appendFrame(1, { a: 11, x: 99 } as any)).toThrow();
+
+    // Nenhuma série foi alterada pelo frame que falhou.
+    expect(chart.pointCount('a')).toBe(1);
+    expect(chart.lastValue('a')).toBe(10);
+    expect(chart.pointCount('b')).toBe(0);
+  });
+
+  it('x não finito lança sem mutar', () => {
+    const chart = new LineChart(canvas, {
+      series: [{ id: 'a', name: 'A', color: '#f00' }],
+      maxPoints: 100,
+      autoDraw: false,
+    } as any);
+
+    expect(() => chart.appendFrame(NaN, { a: 10 })).toThrow('not finite');
+    expect(() => chart.appendFrame(Infinity, { a: 10 })).toThrow('not finite');
+    expect(chart.pointCount('a')).toBe(0);
+  });
+
+  it('y não finito lança sem mutar nenhuma série', () => {
+    const chart = new LineChart(canvas, {
+      series: [
+        { id: 'a', name: 'A', color: '#f00' },
+        { id: 'b', name: 'B', color: '#0f0' },
+      ],
+      maxPoints: 100,
+      autoDraw: false,
+    } as any);
+
+    chart.appendFrame(0, { a: 10, b: 20 });
+
+    expect(() => chart.appendFrame(1, { a: Infinity, b: 25 })).toThrow('not finite');
+
+    // Nenhuma série foi alterada.
+    expect(chart.lastValue('a')).toBe(10);
+    expect(chart.lastValue('b')).toBe(20);
+    expect(chart.pointCount('a')).toBe(1);
+  });
+
+  it('y = NaN é aceito (reservado para gaps v1.6.0)', () => {
+    const chart = new LineChart(canvas, {
+      series: [{ id: 'a', name: 'A', color: '#f00' }],
+      maxPoints: 100,
+      autoDraw: false,
+    } as any);
+
+    expect(() => chart.appendFrame(0, { a: NaN })).not.toThrow();
+    expect(chart.pointCount('a')).toBe(1);
+  });
+
+  it('x não monotônico lança', () => {
+    const chart = new LineChart(canvas, {
+      series: [{ id: 'a', name: 'A', color: '#f00' }],
+      maxPoints: 100,
+      autoDraw: false,
+    } as any);
+
+    chart.appendFrame(5, { a: 10 });
+    expect(() => chart.appendFrame(3, { a: 11 })).toThrow('monotonically increasing');
+  });
+
+  it('ring buffer mantém counts alinhados após overflow', () => {
+    const chart = new LineChart(canvas, {
+      series: [
+        { id: 'a', name: 'A', color: '#f00' },
+        { id: 'b', name: 'B', color: '#0f0' },
+      ],
+      maxPoints: 3,
+      autoDraw: false,
+    } as any);
+
+    chart.appendFrame(0, { a: 10, b: 20 });
+    chart.appendFrame(1, { a: 11 });
+    chart.appendFrame(2, { a: 12, b: 22 });
+    chart.appendFrame(3, { a: 13 });
+    chart.appendFrame(4, { a: 14, b: 24 });
+
+    // Janela de 3 pontos: ambas as séries devem ter 3 amostras alinhadas.
+    expect(chart.pointCount('a')).toBe(3);
+    expect(chart.pointCount('b')).toBe(3);
+  });
+
+  it('uma chamada com autoDraw agenda no máximo um rAF', () => {
+    const chart = new LineChart(canvas, {
+      series: [
+        { id: 'a', name: 'A', color: '#f00' },
+        { id: 'b', name: 'B', color: '#0f0' },
+      ],
+      maxPoints: 100,
+      autoDraw: true,
+    } as any);
+
+    const rafSpy = vi.spyOn(globalThis, 'requestAnimationFrame');
+    chart.appendFrame(0, { a: 10, b: 20 });
+
+    expect(rafSpy).toHaveBeenCalledTimes(1);
+    rafSpy.mockRestore();
+  });
+
+  it('autoDraw false não agenda rAF', () => {
+    const chart = new LineChart(canvas, {
+      series: [{ id: 'a', name: 'A', color: '#f00' }],
+      maxPoints: 100,
+      autoDraw: false,
+    } as any);
+
+    const rafSpy = vi.spyOn(globalThis, 'requestAnimationFrame');
+    chart.appendFrame(0, { a: 10 });
+
+    expect(rafSpy).not.toHaveBeenCalled();
+    rafSpy.mockRestore();
+  });
+
+  it('frame vazio não altera estado', () => {
+    const chart = new LineChart(canvas, {
+      series: [{ id: 'a', name: 'A', color: '#f00' }],
+      maxPoints: 100,
+      autoDraw: false,
+    } as any);
+
+    chart.appendFrame(0, {});
+
+    expect(chart.pointCount('a')).toBe(0);
+  });
+
+  it('aceita Map<SeriesRef, number> com índices numéricos', () => {
+    const chart = new LineChart(canvas, {
+      series: [
+        { name: 'A', color: '#f00' },
+        { name: 'B', color: '#0f0' },
+      ],
+      maxPoints: 100,
+      autoDraw: false,
+    } as any);
+
+    const m = new Map<number, number>();
+    m.set(0, 10);
+    m.set(1, 20);
+    chart.appendFrame(0, m);
+
+    expect(chart.lastValue(0)).toBe(10);
+    expect(chart.lastValue(1)).toBe(20);
+  });
+
+  it('lança fora do modo ring', () => {
+    const chart = new LineChart(canvas, {
+      series: [{ name: 'A', color: '#f00' }],
+      autoDraw: false,
+    } as any);
+
+    expect(() => chart.appendFrame(0, { a: 10 } as any)).toThrow('requires ring mode');
+  });
+
+  it('destroyed não dispara appendFrame', () => {
+    const chart = new LineChart(canvas, {
+      series: [{ id: 'a', name: 'A', color: '#f00' }],
+      maxPoints: 100,
+      autoDraw: false,
+    } as any);
+
+    chart.destroy();
+
+    // Não deve lançar nem alterar nada.
+    expect(() => chart.appendFrame(0, { a: 10 })).not.toThrow();
+    expect(chart.pointCount('a')).toBe(0);
+  });
+});
+
+describe('Events (v1.5.0)', () => {
+  let canvas: HTMLCanvasElement;
+
+  beforeEach(() => {
+    canvas = createCanvas();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    canvas.remove();
+    vi.useRealTimers();
+  });
+
+  it('on("frameappended") recebe payload', () => {
+    const chart = new LineChart(canvas, {
+      series: [
+        { id: 'a', name: 'A', color: '#f00' },
+        { id: 'b', name: 'B', color: '#0f0' },
+      ],
+      maxPoints: 100,
+      autoDraw: false,
+    } as any);
+
+    const events: { seriesUpdated: number; render: boolean }[] = [];
+    chart.on('frameappended', (ev) => events.push(ev));
+
+    chart.appendFrame(0, { a: 10, b: 20 });
+
+    expect(events).toHaveLength(1);
+    expect(events[0].seriesUpdated).toBe(2); // 2 updated
+    expect(events[0].render).toBe(false); // autoDraw off
+  });
+
+  it('frameappended inclui carry-forward no seriesUpdated', () => {
+    const chart = new LineChart(canvas, {
+      series: [
+        { id: 'a', name: 'A', color: '#f00' },
+        { id: 'b', name: 'B', color: '#0f0' },
+      ],
+      maxPoints: 100,
+      autoDraw: false,
+    } as any);
+
+    chart.appendFrame(0, { a: 10, b: 20 }); // seed
+
+    const events: { seriesUpdated: number }[] = [];
+    chart.on('frameappended', (ev) => events.push(ev));
+
+    // 'b' ausente → carry-forward conta como atualizada.
+    chart.appendFrame(1, { a: 11 });
+
+    expect(events).toHaveLength(1);
+    expect(events[0].seriesUpdated).toBe(2); // 'a' updated + 'b' carried
+  });
+
+  it('off remove listener', () => {
+    const chart = new LineChart(canvas, {
+      series: [{ id: 'a', name: 'A', color: '#f00' }],
+      maxPoints: 100,
+      autoDraw: false,
+    } as any);
+
+    const calls: number[] = [];
+    const fn = () => calls.push(1);
+    chart.on('frameappended', fn);
+    chart.off('frameappended', fn);
+
+    chart.appendFrame(0, { a: 10 });
+
+    expect(calls).toHaveLength(0);
+  });
+
+  it('off com listener inexistente é no-op', () => {
+    const chart = new LineChart(canvas, {
+      series: [{ id: 'a', name: 'A', color: '#f00' }],
+      maxPoints: 100,
+      autoDraw: false,
+    } as any);
+
+    expect(() => chart.off('frameappended', () => {})).not.toThrow();
+  });
+
+  it('destroy emite evento uma vez', () => {
+    const chart = new LineChart(canvas, {
+      series: [{ id: 'a', name: 'A', color: '#f00' }],
+      maxPoints: 100,
+      autoDraw: false,
+    } as any);
+
+    const calls: number[] = [];
+    chart.on('destroy', () => calls.push(1));
+
+    chart.destroy();
+    expect(calls).toHaveLength(1);
+
+    // Idempotente: destroy de novo não emite.
+    chart.destroy();
+    expect(calls).toHaveLength(1);
+  });
+
+  it('após destroy, listeners são limpos e appendFrame não emite', () => {
+    const chart = new LineChart(canvas, {
+      series: [{ id: 'a', name: 'A', color: '#f00' }],
+      maxPoints: 100,
+      autoDraw: false,
+    } as any);
+
+    let frameCalls = 0;
+    chart.on('frameappended', () => frameCalls++);
+    let destroyCalls = 0;
+    chart.on('destroy', () => destroyCalls++);
+
+    chart.destroy();
+
+    expect(destroyCalls).toBe(1);
+    // Após destroy, appendFrame não deve emitir nem lançar.
+    expect(() => chart.appendFrame(0, { a: 10 })).not.toThrow();
+    expect(frameCalls).toBe(0);
+  });
+
+  it('on/off em chart destruído é no-op', () => {
+    const chart = new LineChart(canvas, {
+      series: [{ id: 'a', name: 'A', color: '#f00' }],
+      maxPoints: 100,
+      autoDraw: false,
+    } as any);
+
+    chart.destroy();
+
+    const fn = () => {};
+    expect(() => chart.on('frameappended', fn)).not.toThrow();
+    expect(() => chart.off('frameappended', fn)).not.toThrow();
   });
 });
