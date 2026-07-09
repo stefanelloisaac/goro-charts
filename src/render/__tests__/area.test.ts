@@ -72,4 +72,67 @@ describe('renderArea', () => {
     // Decimado: muito menos lineTo que N (limitado a ~colunas de pixel).
     expect(mc.calls.lineTo.length).toBeLessThan(N);
   });
+
+  describe('gapMode (sparse)', () => {
+    it('"break" (padrão): um NaN no meio produz 2 runs (2 fill + 2 stroke)', () => {
+      const mc = createMockCtx();
+      renderArea(mc, makeView([0, 50, 100], [10, NaN, 90], 0, 100), plot, opts as any);
+      expect(mc.calls.fill).toBe(2);
+      expect(mc.calls.stroke).toBe(2);
+    });
+
+    it('"connect": um NaN no meio ainda produz 1 run só (1 fill + 1 stroke)', () => {
+      const mc = createMockCtx();
+      const connectOpts = { ...opts, gapMode: 'connect' };
+      renderArea(mc, makeView([0, 50, 100], [10, NaN, 90], 0, 100), plot, connectOpts as any);
+      expect(mc.calls.fill).toBe(1);
+      expect(mc.calls.stroke).toBe(1);
+    });
+
+    it('"zero": um NaN no meio produz 1 run só (1 fill + 1 stroke)', () => {
+      const mc = createMockCtx();
+      const zeroOpts = { ...opts, gapMode: 'zero' };
+      renderArea(mc, makeView([0, 50, 100], [10, NaN, 90], 0, 100), plot, zeroOpts as any);
+      expect(mc.calls.fill).toBe(1);
+      expect(mc.calls.stroke).toBe(1);
+    });
+
+    it('série toda NaN não desenha nenhum run', () => {
+      const mc = createMockCtx();
+      renderArea(mc, makeView([0, 50, 100], [NaN, NaN, NaN], 0, 100), plot, opts as any);
+      expect(mc.calls.fill).toBe(0);
+      expect(mc.calls.stroke).toBe(0);
+    });
+  });
+
+  describe('gapMode (decimado)', () => {
+    function makeDenseGapData(gapAtFraction: number) {
+      const N = 5000;
+      const gapStart = Math.floor(N * gapAtFraction);
+      const gapEnd = gapStart + 200;
+      const xs = Array.from({ length: N }, (_, i) => (i / (N - 1)) * 100);
+      const ys = Array.from({ length: N }, (_, i) =>
+        i >= gapStart && i < gapEnd ? NaN : 50 + Math.sin(i * 0.05) * 40,
+      );
+      return { xs, ys };
+    }
+
+    it('"break": uma lacuna densa produz mais de um run (>1 fill/stroke)', () => {
+      const { xs, ys } = makeDenseGapData(0.4);
+      const mc = createMockCtx();
+      const breakOpts = { ...opts, gapMode: 'break' };
+      renderArea(mc, makeView(xs, ys, 0, 100), plot, breakOpts as any);
+      expect(mc.calls.fill).toBeGreaterThanOrEqual(2);
+      expect(mc.calls.stroke).toBeGreaterThanOrEqual(2);
+    });
+
+    it('"connect": uma lacuna densa ainda produz 1 run só', () => {
+      const { xs, ys } = makeDenseGapData(0.4);
+      const mc = createMockCtx();
+      const connectOpts = { ...opts, gapMode: 'connect' };
+      renderArea(mc, makeView(xs, ys, 0, 100), plot, connectOpts as any);
+      expect(mc.calls.fill).toBe(1);
+      expect(mc.calls.stroke).toBe(1);
+    });
+  });
 });

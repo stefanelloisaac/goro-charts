@@ -8,6 +8,9 @@
  *
  * `yMin: undefined / yMax: undefined` — the grid domain expands from data
  * automatically. Set a number to pin the bound; `0` is a legitimate bound.
+ *
+ * `xAxis.type: 'linear'` / `gapMode: 'break'` are the v1.6.0 defaults: no
+ * time-axis behaviour and no visual gap handling unless explicitly opted in.
  */
 
 import type { ResolvedOpts } from './types.ts';
@@ -36,4 +39,8 @@ export const CHART_DEFAULTS: ResolvedOpts = {
   yMin: undefined,
   yMax: undefined,
   maxDots: 2000,
+  xAxis: { type: 'linear' },
+  yAxis: {},
+  tooltip: {},
+  gapMode: 'break',
 };

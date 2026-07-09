@@ -14,6 +14,12 @@
  * Both walk logical order over physical storage using a `toWrap` countdown
  * instead of a modulo per point (snapshot mode never wraps; ring mode wraps
  * once). The scale arithmetic is inlined for hot-loop speed.
+ *
+ * `opts.gapMode` (v1.6.0) controls how a `NaN` Y sample renders:
+ *  - `'break'` (default): lifts the pen — no line crosses the gap.
+ *  - `'connect'`: the gap sample is skipped, so its valid neighbours join
+ *    directly.
+ *  - `'zero'`: the gap sample is treated as `0` for this draw only.
  */
 
 import type { SeriesView, PlotRect, ResolvedOpts } from '../types.ts';
@@ -35,6 +41,9 @@ export function renderLine(ctx: CanvasRenderingContext2D, view: SeriesView, plot
   const xOff = plot.x - view.xMin * xScale;
   const yScale = yRange > 0 ? plot.h / yRange : 0;
   const yOff = plot.y + plot.h + view.yMin * yScale;
+  // Fall back to the documented default when a caller (or an older test
+  // fixture) omits gapMode — ResolvedOpts always sets it in production.
+  const gapMode = opts.gapMode ?? 'break';
 
   let p = view.head;
   let toWrap = cap - view.head;
@@ -45,7 +54,10 @@ export function renderLine(ctx: CanvasRenderingContext2D, view: SeriesView, plot
     let colMaxY = 0;
     let colFirstY = 0;
     let colLastY = 0;
-    let started = false;
+    let colHasData = false;
+    // Whether a sub-path is currently open (moveTo already issued) — the
+    // decimation-loop equivalent of a "pen down" state.
+    let segOpen = false;
 
     const flush = (cx: number) => {
       ctx.lineTo(cx, colFirstY);
@@ -54,26 +66,46 @@ export function renderLine(ctx: CanvasRenderingContext2D, view: SeriesView, plot
       ctx.lineTo(cx, colLastY);
     };
 
+    // Close out the column currently being accumulated (`col`), called right
+    // before moving to a different column and once more after the loop for
+    // the final column. An empty column (all-NaN under 'break'/'connect')
+    // lifts the pen for 'break' only; 'connect' silently bridges over it.
+    const closeColumn = () => {
+      if (!colHasData) {
+        if (gapMode === 'break') segOpen = false;
+        return;
+      }
+      if (segOpen) flush(col + 0.5);
+      // else: the moveTo for this column's first point already ran inline.
+    };
+
     for (let i = 0; i < n; i++) {
       const px = xOff + xArr[p] * xScale;
       const c = px | 0;
-      const py = yOff - yArr[p] * yScale;
+      const rawY = yArr[p];
+      const isGap = Number.isNaN(rawY);
 
       if (c !== col) {
-        if (started) flush(col + 0.5);
-        else {
-          ctx.moveTo(c + 0.5, py);
-          started = true;
-        }
+        closeColumn();
         col = c;
-        colMinY = py;
-        colMaxY = py;
-        colFirstY = py;
-        colLastY = py;
-      } else {
-        if (py < colMinY) colMinY = py;
-        if (py > colMaxY) colMaxY = py;
-        colLastY = py;
+        colHasData = false;
+      }
+
+      if (!isGap || gapMode === 'zero') {
+        const y = isGap ? 0 : rawY;
+        const py = yOff - y * yScale;
+        if (!colHasData) {
+          colFirstY = colMinY = colMaxY = colLastY = py;
+          colHasData = true;
+          if (!segOpen) {
+            ctx.moveTo(col + 0.5, py);
+            segOpen = true;
+          }
+        } else {
+          if (py < colMinY) colMinY = py;
+          if (py > colMaxY) colMaxY = py;
+          colLastY = py;
+        }
       }
 
       if (--toWrap === 0) {
@@ -81,15 +113,31 @@ export function renderLine(ctx: CanvasRenderingContext2D, view: SeriesView, plot
         toWrap = cap;
       } else p++;
     }
-    if (started) flush(col + 0.5);
+    closeColumn();
   } else {
-    ctx.moveTo(xOff + xArr[p] * xScale, yOff - yArr[p] * yScale);
-    if (--toWrap === 0) {
-      p = 0;
-      toWrap = cap;
-    } else p++;
-    for (let i = 1; i < n; i++) {
-      ctx.lineTo(xOff + xArr[p] * xScale, yOff - yArr[p] * yScale);
+    // Whether a sub-path is currently open — 'break' lifts the pen at a gap
+    // so the next valid point re-opens with moveTo instead of lineTo.
+    let segOpen = false;
+    for (let i = 0; i < n; i++) {
+      const rawY = yArr[p];
+      const isGap = Number.isNaN(rawY);
+
+      if (isGap && gapMode !== 'zero') {
+        if (gapMode === 'break') segOpen = false;
+        // 'connect': skip the sample entirely — the next valid point joins
+        // directly from wherever the pen currently is.
+      } else {
+        const y = isGap ? 0 : rawY;
+        const px = xOff + xArr[p] * xScale;
+        const py = yOff - y * yScale;
+        if (!segOpen) {
+          ctx.moveTo(px, py);
+          segOpen = true;
+        } else {
+          ctx.lineTo(px, py);
+        }
+      }
+
       if (--toWrap === 0) {
         p = 0;
         toWrap = cap;

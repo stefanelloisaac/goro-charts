@@ -57,4 +57,34 @@ describe('pxToX', () => {
     const d = { xMin: 42, xMax: 42, yMin: 0, yMax: 100 };
     expect(pxToX(250, d, plot)).toBe(42);
   });
+
+  it('scaleType="time" produz o mesmo resultado que o padrão linear (epoch-ms é numérico)', () => {
+    const d = { xMin: 1_700_000_000_000, xMax: 1_700_000_008_640_000, yMin: 0, yMax: 100 };
+    const linear = pxToX(250, d, plot);
+    const time = pxToX(250, d, plot, 'time');
+    expect(time).toBe(linear);
+  });
+
+  it('scaleType="band" lança erro informativo', () => {
+    const d = { xMin: 0, xMax: 100, yMin: 0, yMax: 100 };
+    expect(() => pxToX(250, d, plot, 'band')).toThrow(/band scale is not implemented until v1\.9\.0/);
+  });
+});
+
+describe('scaleType', () => {
+  const d = { xMin: 0, xMax: 100, yMin: 0, yMax: 100 };
+
+  it('xToPx com scaleType="time" é idêntico a linear (epoch-ms é contínuo)', () => {
+    expect(xToPx(50, d, plot, 'time')).toBe(xToPx(50, d, plot));
+    expect(xToPx(0, d, plot, 'time')).toBe(xToPx(0, d, plot));
+    expect(xToPx(100, d, plot, 'time')).toBe(xToPx(100, d, plot));
+  });
+
+  it('xToPx com scaleType="band" lança erro informativo', () => {
+    expect(() => xToPx(50, d, plot, 'band')).toThrow(/band scale is not implemented until v1\.9\.0/);
+  });
+
+  it('xToPx com scaleType omisso (undefined) usa linear sem erro', () => {
+    expect(xToPx(50, d, plot, undefined)).toBe(250);
+  });
 });

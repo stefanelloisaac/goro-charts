@@ -178,6 +178,14 @@ export abstract class ChartBase {
       console.warn(`[goro-charts] yMin (${this.opts.yMin}) must be < yMax (${this.opts.yMax}). Swapping.`);
       [this.opts.yMin, this.opts.yMax] = [this.opts.yMax, this.opts.yMin];
     }
+    if (this.opts.xAxis.type !== undefined && !['linear', 'time', 'band'].includes(this.opts.xAxis.type)) {
+      console.warn(`[goro-charts] xAxis.type "${this.opts.xAxis.type}" is invalid. Using "linear".`);
+      this.opts.xAxis = { ...this.opts.xAxis, type: 'linear' };
+    }
+    if (this.opts.gapMode && !['break', 'connect', 'zero'].includes(this.opts.gapMode)) {
+      console.warn(`[goro-charts] gapMode "${this.opts.gapMode}" is invalid. Using "break".`);
+      this.opts.gapMode = 'break';
+    }
     // Validate series configs
     for (let i = 0; i < this.seriesConfigs.length; i++) {
       const s = this.seriesConfigs[i];
@@ -188,6 +196,12 @@ export abstract class ChartBase {
       if (s.yAxis && s.yAxis !== 'left' && s.yAxis !== 'right') {
         console.warn(`[goro-charts] series[${i}] has invalid yAxis "${s.yAxis}". Using "left".`);
         this.seriesConfigs[i] = { ...s, yAxis: 'left' };
+      }
+      if (s.gapMode && !['break', 'connect', 'zero'].includes(s.gapMode)) {
+        console.warn(
+          `[goro-charts] series[${i}] has invalid gapMode "${s.gapMode}". Ignoring (chart default applies).`,
+        );
+        this.seriesConfigs[i] = { ...s, gapMode: undefined };
       }
     }
   }
@@ -329,7 +343,7 @@ export abstract class ChartBase {
     const plot = this.plotRect();
     // Use the grid domain for the reference series axis.
     const axis = (this.seriesConfigs[ref].yAxis ?? 'left') === 'right' ? this.gridDomainRight : this.gridDomainLeft;
-    this.cursorX = xToPx(xVal, axis, plot);
+    this.cursorX = xToPx(xVal, axis, plot, this.opts.xAxis.type);
     this.showCrosshair = true;
     this.draw();
     this.notifySyncCrosshair();
@@ -348,7 +362,7 @@ export abstract class ChartBase {
     ) {
       return;
     }
-    const xVal = pxToX(this.cursorX, this.gridDomainLeft, plot);
+    const xVal = pxToX(this.cursorX, this.gridDomainLeft, plot, this.opts.xAxis.type);
     for (const target of this.syncTargets) target.injectCursor(xVal);
   }
 
@@ -879,7 +893,7 @@ export abstract class ChartBase {
       const crosshairViews = this.buildCrosshairViews();
 
       if (this.onHover || this.liveRegion) {
-        const hits = computeHits(crosshairViews, this.seriesConfigs, plot, this.cursorX);
+        const hits = computeHits(crosshairViews, this.seriesConfigs, plot, this.cursorX, this.opts.xAxis.type);
         if (this.onHover && hits.length > 0) this.onHover(hits);
         if (this.liveRegion) {
           this.liveRegion.textContent =
@@ -1035,6 +1049,7 @@ export abstract class ChartBase {
       lineWidth: cfg.lineWidth ?? this.opts.lineWidth,
       fillColor: cfg.fillColor ?? this.opts.fillColor,
       fillOpacity: cfg.fillOpacity ?? this.opts.fillOpacity,
+      gapMode: cfg.gapMode ?? this.opts.gapMode,
     };
 
     if (cfg.dash) ctx.setLineDash(cfg.dash);
@@ -1192,6 +1207,9 @@ export abstract class ChartBase {
       let toWrap = s.cap - s.head;
       for (let j = 0; j < n; j++) {
         const v = s.yArr[p];
+        // NaN (v1.6.0 gap) fails both comparisons, so it silently
+        // contributes 0 here — same documented stacking-gap contract as
+        // renderStackedBands, and never poisons runningPos/runningNeg.
         if (v > 0) {
           runningPos[j] += v;
           hasPos = true;
@@ -1578,7 +1596,7 @@ export abstract class ChartBase {
    * data.
    */
   private deriveCursorYFromViews(plot: PlotRect, views: SeriesView[]): number {
-    const hits = computeHits(views, this.seriesConfigs, plot, this.cursorX);
+    const hits = computeHits(views, this.seriesConfigs, plot, this.cursorX, this.opts.xAxis.type);
     if (hits.length > 0) return hits[0].py;
     return plot.y + plot.h / 2;
   }

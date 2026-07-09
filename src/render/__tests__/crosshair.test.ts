@@ -93,6 +93,17 @@ describe('computeHits', () => {
     expect(hits[1].yVal).toBe(50);
   });
 
+  it('cada hit carrega o seriesIndex correto', () => {
+    const views = [makeView([0, 100], [0, 100], 0, 100), makeView([0, 100], [100, 0], 0, 100)];
+    const configs: any = [
+      { name: 'S1', color: '#f00' },
+      { name: 'S2', color: '#0f0' },
+    ];
+    const hits = computeHits(views, configs, plot, 250);
+    expect(hits[0].seriesIndex).toBe(0);
+    expect(hits[1].seriesIndex).toBe(1);
+  });
+
   it('omite hit abaixo do plot', () => {
     const views = [makeView([0, 100], [-50, -50], 0, 100)];
     const configs: any = [{ name: 'Below', color: '#f00' }];
@@ -128,6 +139,8 @@ const opts: any = {
   fontSize: 11,
   fontFamily: 'system-ui, sans-serif',
   textColor: 'rgba(255,255,255,0.5)',
+  xAxis: {},
+  tooltip: {},
 };
 
 describe('renderCrosshair', () => {
@@ -193,5 +206,47 @@ describe('renderCrosshair', () => {
     // cssW pequeno força o flip do card para a esquerda do cursor.
     renderCrosshair(mc, views, configs, plot, opts, { x: 445, y: 40 }, 460);
     expect(mc.calls.fill).toBeGreaterThan(0);
+  });
+
+  it('SeriesConfig.valueFormat tem precedência sobre tooltip.valueFormat e o padrão', () => {
+    const mc = createMockCtx();
+    const views = [makeView([0, 100], [0, 100], 0, 100)];
+    const configs: any = [{ name: 'S1', color: '#f00', valueFormat: (v: number) => `series:${v}` }];
+    const optsWithTooltip = { ...opts, tooltip: { valueFormat: () => 'tooltip-level' } };
+    renderCrosshair(mc, views, configs, plot, optsWithTooltip, { x: 250, y: 130 }, 500);
+    const texts = mc.calls.fillText.map((t) => t[0]);
+    expect(texts.some((t) => t.startsWith('series:'))).toBe(true);
+    expect(texts).not.toContain('tooltip-level');
+  });
+
+  it('tooltip.valueFormat é usado quando a série não define valueFormat', () => {
+    const mc = createMockCtx();
+    const views = [makeView([0, 100], [0, 100], 0, 100)];
+    const configs: any = [{ name: 'S1', color: '#f00' }];
+    const optsWithTooltip = { ...opts, tooltip: { valueFormat: ({ value }: any) => `tt:${value}` } };
+    renderCrosshair(mc, views, configs, plot, optsWithTooltip, { x: 250, y: 130 }, 500);
+    const texts = mc.calls.fillText.map((t) => t[0]);
+    expect(texts.some((t) => t.startsWith('tt:'))).toBe(true);
+  });
+
+  it('tooltip.xFormat customiza a linha X do card', () => {
+    const mc = createMockCtx();
+    const views = [makeView([0, 100], [0, 100], 0, 100)];
+    const configs: any = [{ name: 'S1', color: '#f00' }];
+    const optsWithTooltip = { ...opts, tooltip: { xFormat: (x: number) => `X=${x}` } };
+    renderCrosshair(mc, views, configs, plot, optsWithTooltip, { x: 250, y: 130 }, 500);
+    const texts = mc.calls.fillText.map((t) => t[0]);
+    expect(texts.some((t) => t.startsWith('X='))).toBe(true);
+  });
+
+  it('xAxis.type "time" formata a linha X do card como data/hora por padrão', () => {
+    const mc = createMockCtx();
+    const views = [makeView([0, 100], [0, 100], 0, 100, 0, 100)];
+    const configs: any = [{ name: 'S1', color: '#f00' }];
+    const timeOpts = { ...opts, xAxis: { type: 'time', timeZone: 'UTC' } };
+    renderCrosshair(mc, views, configs, plot, timeOpts, { x: 250, y: 130 }, 500);
+    const texts = mc.calls.fillText.map((t) => t[0]);
+    // O texto da linha X não deve ser um número puro (contém separadores de hora/data).
+    expect(texts.some((t) => t !== 'x' && Number.isNaN(Number(t)))).toBe(true);
   });
 });

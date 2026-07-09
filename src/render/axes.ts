@@ -9,9 +9,33 @@
  */
 
 import type { Domain, PlotRect, ResolvedOpts } from '../types.ts';
-import { generateTicks } from '../math/ticks.ts';
-import { formatNumber } from '../math/format.ts';
+import { generateTicks, generateTimeTicks, type TimeTickUnit } from '../math/ticks.ts';
+import { formatNumber, formatTimeTick } from '../math/format.ts';
 import { xToPx, yToPx } from '../math/scale.ts';
+
+/**
+ * Resolve the X-axis tick values for the current domain, dispatching on
+ * `opts.xAxis.type`. Kept as a single helper so `renderGrid` (line
+ * placement) and `renderAxes` (label placement) never drift out of sync.
+ */
+function resolveXTicks(d: Domain, opts: ResolvedOpts): { values: number[]; unit?: TimeTickUnit } {
+  if (opts.xAxis.type === 'time') return generateTimeTicks(d.xMin, d.xMax, opts.xTicks);
+  // linear and band use the same numeric tick generator; band will get its
+  // own tick logic in v1.9.0.
+  return { values: generateTicks(d.xMin, d.xMax, opts.xTicks) };
+}
+
+/** Resolve the display label for one X tick, honouring `xAxis.tickFormat` and the time-aware default. */
+function formatXTick(x: number, unit: TimeTickUnit | undefined, opts: ResolvedOpts): string {
+  if (opts.xAxis.tickFormat) return opts.xAxis.tickFormat(x);
+  if (opts.xAxis.type === 'time' && unit) return formatTimeTick(x, unit, opts.xAxis.timeZone);
+  return formatNumber(x);
+}
+
+/** Resolve the display label for one Y tick, honouring `yAxis.tickFormat`. */
+function formatYTick(y: number, opts: ResolvedOpts): string {
+  return opts.yAxis.tickFormat ? opts.yAxis.tickFormat(y) : formatNumber(y);
+}
 
 /** Draw the background grid (dashed internal lines + closed frame). */
 export function renderGrid(ctx: CanvasRenderingContext2D, d: Domain, plot: PlotRect, opts: ResolvedOpts): void {
@@ -36,10 +60,10 @@ export function renderGrid(ctx: CanvasRenderingContext2D, d: Domain, plot: PlotR
   ctx.stroke();
 
   // Dashed vertical lines — skip if they land on left/right boundary.
-  const xTicks = generateTicks(d.xMin, d.xMax, opts.xTicks);
+  const { values: xTicks } = resolveXTicks(d, opts);
   ctx.beginPath();
   for (const x of xTicks) {
-    const px = xToPx(x, d, plot);
+    const px = xToPx(x, d, plot, opts.xAxis.type);
     if (px <= plot.x || px >= right) continue;
     ctx.moveTo(px, plot.y);
     ctx.lineTo(px, bottom);
@@ -71,16 +95,16 @@ export function renderAxes(
   ctx.textBaseline = 'middle';
   const ypx = side === 'right' ? plot.x + plot.w + 6 : plot.x - 6;
   for (const y of yTicks) {
-    ctx.fillText(formatNumber(y), ypx, yToPx(y, d, plot));
+    ctx.fillText(formatYTick(y, opts), ypx, yToPx(y, d, plot));
   }
 
   // X labels only on the left side (they share the same x domain)
   if (side === 'left') {
-    const xTicks = generateTicks(d.xMin, d.xMax, opts.xTicks);
+    const { values: xTicks, unit } = resolveXTicks(d, opts);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     for (const x of xTicks) {
-      ctx.fillText(formatNumber(x), xToPx(x, d, plot), plot.y + plot.h + 6);
+      ctx.fillText(formatXTick(x, unit, opts), xToPx(x, d, plot, opts.xAxis.type), plot.y + plot.h + 6);
     }
   }
 }

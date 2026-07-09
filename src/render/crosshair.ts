@@ -13,8 +13,8 @@
  * math. `renderCrosshair` uses it internally.
  */
 
-import type { SeriesView, SeriesConfig, PlotRect, ResolvedOpts } from '../types.ts';
-import { formatNumber } from '../math/format.ts';
+import type { SeriesView, SeriesConfig, PlotRect, ResolvedOpts, ScaleType } from '../types.ts';
+import { formatNumber, formatTimeTick } from '../math/format.ts';
 import { xToPx, yToPx, pxToX } from '../math/scale.ts';
 import { roundedRect } from './shape.ts';
 
@@ -27,18 +27,30 @@ export interface SeriesHit {
   color: string;
   /** Series display name (from {@link SeriesConfig.name}). */
   label: string;
+  /** Index of this series in the chart's series array (for resolving per-series formatters). */
+  seriesIndex: number;
 }
 
 /**
  * Compute interpolated hit data for every non-empty series at `cursorX`.
  * Called internally by {@link renderCrosshair} and available for the
  * `onHover` callback so consumers can build custom tooltips.
+ *
+ * The `!Number.isFinite(yVal)` guard below already implements "tooltip
+ * ignores absent values" (§6.4): `yVal` is interpolated straight from the
+ * raw stored `yArr`, so a `NaN` sample (or interpolation straddling one)
+ * drops the hit regardless of the series' `gapMode` — gapMode only affects
+ * how gaps are *drawn*, never the tooltip readout.
+ *
+ * @param scaleType - Scale type forwarded to `pxToX`/`xToPx`. Default `'linear'`.
+ *   `'band'` throws until v1.9.0.
  */
 export function computeHits(
   views: readonly SeriesView[],
   configs: readonly SeriesConfig[],
   plot: PlotRect,
   cursorX: number,
+  scaleType?: ScaleType,
 ): SeriesHit[] {
   const hits: SeriesHit[] = [];
 
@@ -48,7 +60,7 @@ export function computeHits(
     const n = view.count;
     if (n === 0) continue;
 
-    const cursorVal = pxToX(cursorX, view, plot);
+    const cursorVal = pxToX(cursorX, view, plot, scaleType);
     const loLogical = view.bracketLogical(cursorVal);
     const hiLogical = loLogical + 1 < n ? loLogical + 1 : n - 1;
     const lo = view.physOf(loLogical);
@@ -63,7 +75,7 @@ export function computeHits(
     else if (t > 1) t = 1;
     const xVal = x0 + (x1 - x0) * t;
     const yVal = y0 + (y1 - y0) * t;
-    const px = xToPx(xVal, view, plot);
+    const px = xToPx(xVal, view, plot, scaleType);
     const py = yToPx(yVal, view, plot);
 
     // A hit only exists when its marker would be visible inside the plot.
@@ -80,6 +92,7 @@ export function computeHits(
       yVal,
       color: configs[s].color,
       label: configs[s].name,
+      seriesIndex: s,
     });
   }
   return hits;
@@ -98,7 +111,7 @@ export function renderCrosshair(
   if (cursor.x < plot.x || cursor.x > plot.x + plot.w) return;
   if (cursor.y < plot.y || cursor.y > plot.y + plot.h) return;
 
-  const hits = computeHits(views, configs, plot, cursor.x);
+  const hits = computeHits(views, configs, plot, cursor.x, opts.xAxis.type);
   if (hits.length === 0) return;
 
   const guidePx = hits[0].px;
@@ -141,7 +154,22 @@ export function renderCrosshair(
   }
 
   // ---- Tooltip card ----------------------------------------------------
-  const fx = (n: number) => formatNumber(n);
+  // Value formatting precedence (§6.2): per-series SeriesConfig.valueFormat
+  // wins over the chart-wide ChartOpts.tooltip.valueFormat, which wins over
+  // the default formatNumber.
+  const fv = (h: SeriesHit): string => {
+    const cfg = configs[h.seriesIndex];
+    if (cfg.valueFormat) return cfg.valueFormat(h.yVal);
+    if (opts.tooltip.valueFormat) return opts.tooltip.valueFormat({ value: h.yVal, series: cfg });
+    return formatNumber(h.yVal);
+  };
+  // X row formatting precedence: tooltip.xFormat wins, else a time-aware
+  // default when the axis is time-scaled, else formatNumber.
+  const fxRow = (x: number): string => {
+    if (opts.tooltip.xFormat) return opts.tooltip.xFormat(x);
+    if (opts.xAxis.type === 'time') return formatTimeTick(x, 'second', opts.xAxis.timeZone);
+    return formatNumber(x);
+  };
   const nameFont = `${opts.fontSize}px ${opts.fontFamily}`;
   const valueFont = `600 ${opts.fontSize + 1}px ${opts.fontFamily}`;
   const pad = 10;
@@ -154,12 +182,12 @@ export function renderCrosshair(
   const nameW = Math.max(...hits.map((h) => ctx.measureText(h.label).width));
 
   ctx.font = valueFont;
-  const valueW = Math.max(...hits.map((h) => ctx.measureText(fx(h.yVal)).width));
+  const valueW = Math.max(...hits.map((h) => ctx.measureText(fv(h)).width));
 
   ctx.font = nameFont;
   const xLabelW = ctx.measureText('x').width;
   ctx.font = valueFont;
-  const xValW = ctx.measureText(fx(cursorX)).width;
+  const xValW = ctx.measureText(fxRow(cursorX)).width;
 
   const col2W = Math.max(0, nameW, xLabelW);
   const col3W = Math.max(valueW, xValW);
@@ -199,7 +227,7 @@ export function renderCrosshair(
   ctx.font = valueFont;
   ctx.textAlign = 'right';
   ctx.fillStyle = 'rgba(255,255,255,0.85)';
-  ctx.fillText(fx(cursorX), tx + cardW - pad, xRowY + rowH - 4);
+  ctx.fillText(fxRow(cursorX), tx + cardW - pad, xRowY + rowH - 4);
 
   const divY = ty + pad + headerH + 1;
   ctx.strokeStyle = 'rgba(255,255,255,0.07)';
@@ -226,7 +254,7 @@ export function renderCrosshair(
     ctx.font = valueFont;
     ctx.textAlign = 'right';
     ctx.fillStyle = 'rgba(255,255,255,0.90)';
-    ctx.fillText(fx(h.yVal), tx + cardW - pad, ry + rowH - 4);
+    ctx.fillText(fv(h), tx + cardW - pad, ry + rowH - 4);
   }
 
   ctx.textAlign = 'left';

@@ -59,4 +59,26 @@ describe('renderScatter', () => {
     expect(mc.calls.fill).toBe(1);
     expect(mc.calls.arc.length).toBe(expectedCount);
   });
+
+  describe('gapMode', () => {
+    it('"break" (padrão): NaN não desenha um dot', () => {
+      const mc = createMockCtx();
+      renderScatter(mc, makeView([0, 50, 100], [10, NaN, 90]), plot, opts as any);
+      expect(mc.calls.arc.length).toBe(2);
+    });
+
+    it('"connect": NaN também não desenha um dot (idêntico a "break" no scatter)', () => {
+      const mc = createMockCtx();
+      const connectOpts = { ...opts, gapMode: 'connect' };
+      renderScatter(mc, makeView([0, 50, 100], [10, NaN, 90]), plot, connectOpts as any);
+      expect(mc.calls.arc.length).toBe(2);
+    });
+
+    it('"zero": NaN desenha um dot em y=0', () => {
+      const mc = createMockCtx();
+      const zeroOpts = { ...opts, gapMode: 'zero' };
+      renderScatter(mc, makeView([0, 50, 100], [10, NaN, 90]), plot, zeroOpts as any);
+      expect(mc.calls.arc.length).toBe(3);
+    });
+  });
 });

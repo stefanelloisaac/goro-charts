@@ -22,5 +22,10 @@ export type {
   ChartEventListener,
   FrameAppendedEvent,
   ChartDestroyedEvent,
+  ScaleType,
+  GapMode,
+  XAxisConfig,
+  YAxisConfig,
+  TooltipConfig,
 } from './types.ts';
 export type { SeriesHit } from './render/crosshair.ts';

@@ -76,7 +76,12 @@ export function renderStackedBands(
   const clampY = (yPx: number): number => (yPx < topY ? topY : yPx > bottomY ? bottomY : yPx);
   const py = (cumY: number): number => clampY(yOff - cumY * yScale);
 
-  // Pre-compute cumulative Y for each layer (logical order).
+  // Pre-compute cumulative Y for each layer (logical order). A `NaN` sample
+  // (v1.6.0 gap) contributes 0 at that index instead of poisoning every
+  // later cumulative value with `NaN` for the rest of the series —
+  // documented stacking-gap contract (§6.4: "stacking trata ausência de
+  // forma documentada"). Per-layer visual break rendering within a band is
+  // out of scope; only the cumulative-sum correctness is fixed here.
   const cumYArr: Float64Array[] = [];
   const running = new Float64Array(n);
   for (let li = 0; li < stores.length; li++) {
@@ -84,7 +89,8 @@ export function renderStackedBands(
     let p = s.head;
     let toWrap = s.cap - s.head;
     for (let j = 0; j < n; j++) {
-      running[j] += s.yArr[p];
+      const v = s.yArr[p];
+      if (!Number.isNaN(v)) running[j] += v;
       if (--toWrap === 0) {
         p = 0;
         toWrap = s.cap;

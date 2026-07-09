@@ -29,6 +29,69 @@ export type DataOwnership = 'copy' | 'borrowed';
  */
 export type SeriesRef = number | string;
 
+/**
+ * Axis coordinate scale.
+ *
+ * - `'linear'` — continuous numeric.
+ * - `'time'` — epoch-ms treated as continuous; tick labels are calendar-aware.
+ * - `'band'` — categorical positions. Reserved for the v1.9.0 bar chart. The
+ *   type is recognised so consumers can reference it; the transform itself is
+ *   stubbed with a descriptive error until v1.9.0.
+ */
+export type ScaleType = 'linear' | 'time' | 'band';
+
+/**
+ * How a series renders a `NaN` (missing) sample.
+ *
+ * - `'break'` (default): lifts the pen — no line/fill crosses the gap.
+ * - `'connect'`: skips the missing sample so its neighbours join directly.
+ * - `'zero'`: treats the missing sample as `0` for rendering only; the
+ *   stored data is never mutated.
+ */
+export type GapMode = 'break' | 'connect' | 'zero';
+
+/**
+ * X-axis scale and tick/label configuration.
+ *
+ * Unrelated to {@link SeriesConfig.yAxis} (which picks left/right per series) —
+ * this configures the axis's coordinate scale and formatting instead.
+ */
+export interface XAxisConfig {
+  /** Coordinate scale for the X axis. Default `'linear'`. */
+  type?: ScaleType;
+  /** Custom tick/axis label formatter. Overrides the built-in default
+   * (`formatNumber`, or the time-aware default when `type: 'time'`). */
+  tickFormat?: (value: number) => string;
+  /**
+   * IANA time zone forwarded to the default time formatter when
+   * `type: 'time'`. Only affects the built-in formatter — has no effect when
+   * `tickFormat` is supplied; the library does not implement general time
+   * zone conversion.
+   */
+  timeZone?: string;
+}
+
+/**
+ * Y-axis tick/label configuration.
+ *
+ * Unrelated to {@link SeriesConfig.yAxis} (which picks left/right per
+ * series) — this configures tick formatting shared by both Y axes.
+ */
+export interface YAxisConfig {
+  /** Custom tick/axis label formatter. Overrides `formatNumber`. */
+  tickFormat?: (value: number) => string;
+}
+
+/** Crosshair tooltip formatting. */
+export interface TooltipConfig {
+  /** Custom formatter for the tooltip's X row. Falls back to a time-aware
+   * default when `xAxis.type === 'time'`, else `formatNumber`. */
+  xFormat?: (value: number) => string;
+  /** Custom formatter for a hit's Y value. {@link SeriesConfig.valueFormat}
+   * takes precedence over this when both are set. */
+  valueFormat?: (ctx: { value: number; series: SeriesConfig }) => string;
+}
+
 /** Per-series visual configuration. */
 export interface SeriesConfig {
   /**
@@ -67,6 +130,13 @@ export interface SeriesConfig {
    * {@link ChartBase.showSeries} / {@link ChartBase.hideSeries}.
    */
   hidden?: boolean;
+  /**
+   * Per-series override of the tooltip value formatter. Takes precedence
+   * over {@link TooltipConfig.valueFormat}.
+   */
+  valueFormat?: (value: number) => string;
+  /** Per-series override of {@link ChartOpts.gapMode}. */
+  gapMode?: GapMode;
 }
 
 /** Public configuration for a {@link LineChart} or {@link AreaChart}. */
@@ -129,6 +199,17 @@ export interface ChartOpts {
    * in (default 2000).
    */
   maxDots?: number;
+  /** X axis scale type, tick formatting, and time zone. Default `{ type: 'linear' }`. */
+  xAxis?: XAxisConfig;
+  /** Y axis tick formatting (shared by both left and right axes). */
+  yAxis?: YAxisConfig;
+  /** Crosshair tooltip value/X formatting. */
+  tooltip?: TooltipConfig;
+  /**
+   * Chart-wide default for how a series renders `NaN` samples. Default
+   * `'break'`. Overridable per series via {@link SeriesConfig.gapMode}.
+   */
+  gapMode?: GapMode;
 }
 
 /**

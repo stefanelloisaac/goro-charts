@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatNumber } from '../format';
+import { formatNumber, formatTimeTick } from '../format';
 
 describe('formatNumber', () => {
   it('inteiro: sem decimal', () => {
@@ -50,5 +50,53 @@ describe('formatNumber', () => {
 
   it('valor inteiro grande não vai para exponencial', () => {
     expect(formatNumber(999_999)).toBe('999999');
+  });
+});
+
+describe('formatTimeTick', () => {
+  const ts = Date.UTC(2026, 5, 15, 14, 30, 45); // 2026-06-15T14:30:45Z
+
+  it('unit "second": inclui hora, minuto e segundo', () => {
+    const s = formatTimeTick(ts, 'second', 'UTC');
+    expect(s).toContain('14');
+    expect(s).toContain('30');
+    expect(s).toContain('45');
+  });
+
+  it('unit "minute": inclui hora e minuto', () => {
+    const s = formatTimeTick(ts, 'minute', 'UTC');
+    expect(s).toContain('14');
+    expect(s).toContain('30');
+  });
+
+  it('unit "hour": inclui hora e minuto', () => {
+    const s = formatTimeTick(ts, 'hour', 'UTC');
+    expect(s).toContain('14');
+  });
+
+  it('unit "day": inclui mês e dia, sem hora', () => {
+    const s = formatTimeTick(ts, 'day', 'UTC');
+    expect(s).toContain('15');
+    expect(s).not.toContain('14:30');
+  });
+
+  it('unit "month": inclui mês e ano', () => {
+    const s = formatTimeTick(ts, 'month', 'UTC');
+    expect(s).toContain('2026');
+  });
+
+  it('unit "year": inclui apenas o ano', () => {
+    const s = formatTimeTick(ts, 'year', 'UTC');
+    expect(s).toBe('2026');
+  });
+
+  it('respeita o timeZone informado', () => {
+    const utc = formatTimeTick(ts, 'hour', 'UTC');
+    const other = formatTimeTick(ts, 'hour', 'America/Sao_Paulo');
+    expect(utc).not.toBe(other);
+  });
+
+  it('sem timeZone não lança (usa fuso do host)', () => {
+    expect(() => formatTimeTick(ts, 'second')).not.toThrow();
   });
 });

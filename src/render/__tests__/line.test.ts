@@ -85,4 +85,86 @@ describe('renderLine', () => {
     expect(mc.state.strokeStyle).toBe('#f00');
     expect(mc.state.lineWidth).toBe(1.5);
   });
+
+  describe('gapMode (sparse)', () => {
+    it('sem gapMode explícito, usa "break" por padrão (2 moveTo em torno do NaN)', () => {
+      const mc = createMockCtx();
+      renderLine(mc, makeView([0, 50, 100], [10, NaN, 90], 0, 100), plot, opts as any);
+      // 2 pontos válidos separados por um gap → cada um inicia seu próprio sub-path.
+      expect(mc.calls.moveTo.length).toBe(2);
+      expect(mc.calls.lineTo.length).toBe(0);
+    });
+
+    it('"break": lifta o pen no NaN, retomando com moveTo', () => {
+      const mc = createMockCtx();
+      const breakOpts = { ...opts, gapMode: 'break' };
+      renderLine(mc, makeView([0, 50, 100], [10, NaN, 90], 0, 100), plot, breakOpts as any);
+      expect(mc.calls.moveTo.length).toBe(2);
+      expect(mc.calls.lineTo.length).toBe(0);
+    });
+
+    it('"connect": pula o NaN e liga os vizinhos válidos direto', () => {
+      const mc = createMockCtx();
+      const connectOpts = { ...opts, gapMode: 'connect' };
+      renderLine(mc, makeView([0, 50, 100], [10, NaN, 90], 0, 100), plot, connectOpts as any);
+      expect(mc.calls.moveTo.length).toBe(1);
+      expect(mc.calls.lineTo.length).toBe(1);
+    });
+
+    it('"zero": desenha o ponto do gap como y=0, mantendo um único sub-path', () => {
+      const mc = createMockCtx();
+      const zeroOpts = { ...opts, gapMode: 'zero' };
+      renderLine(mc, makeView([0, 50, 100], [10, NaN, 90], 0, 100), plot, zeroOpts as any);
+      expect(mc.calls.moveTo.length).toBe(1);
+      expect(mc.calls.lineTo.length).toBe(2);
+    });
+
+    it('série toda NaN não desenha nada', () => {
+      const mc = createMockCtx();
+      renderLine(mc, makeView([0, 50, 100], [NaN, NaN, NaN], 0, 100), plot, opts as any);
+      expect(mc.calls.moveTo.length).toBe(0);
+      expect(mc.calls.lineTo.length).toBe(0);
+      // beginPath/stroke ainda são chamados (early return só ocorre em n===0).
+      expect(mc.calls.beginPath).toBe(1);
+    });
+  });
+
+  describe('gapMode (decimado)', () => {
+    function makeDenseGapData(gapAtFraction: number) {
+      const xs: number[] = [];
+      const ys: number[] = [];
+      const n = 1000;
+      const gapStart = Math.floor(n * gapAtFraction);
+      const gapEnd = gapStart + 50;
+      for (let i = 0; i < n; i++) {
+        xs.push(i);
+        ys.push(i >= gapStart && i < gapEnd ? NaN : Math.sin(i * 0.1) * 40 + 50);
+      }
+      return { xs, ys };
+    }
+
+    it('"break": produz mais de um moveTo quando há uma lacuna densa', () => {
+      const { xs, ys } = makeDenseGapData(0.4);
+      const mc = createMockCtx();
+      const breakOpts = { ...opts, gapMode: 'break' };
+      renderLine(mc, makeView(xs, ys, 0, 100, 0, 999), plot, breakOpts as any);
+      expect(mc.calls.moveTo.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('"connect": produz exatamente 1 moveTo mesmo com lacuna densa', () => {
+      const { xs, ys } = makeDenseGapData(0.4);
+      const mc = createMockCtx();
+      const connectOpts = { ...opts, gapMode: 'connect' };
+      renderLine(mc, makeView(xs, ys, 0, 100, 0, 999), plot, connectOpts as any);
+      expect(mc.calls.moveTo.length).toBe(1);
+    });
+
+    it('"zero": produz exatamente 1 moveTo (todo o range vira um único envelope)', () => {
+      const { xs, ys } = makeDenseGapData(0.4);
+      const mc = createMockCtx();
+      const zeroOpts = { ...opts, gapMode: 'zero' };
+      renderLine(mc, makeView(xs, ys, 0, 100, 0, 999), plot, zeroOpts as any);
+      expect(mc.calls.moveTo.length).toBe(1);
+    });
+  });
 });

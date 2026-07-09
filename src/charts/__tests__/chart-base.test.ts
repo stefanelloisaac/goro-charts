@@ -1660,3 +1660,88 @@ describe('Events (v1.5.0)', () => {
     expect(() => chart.off('frameappended', fn)).not.toThrow();
   });
 });
+
+describe('v1.6.0 — eixo temporal, formatadores e gapMode', () => {
+  let canvas: HTMLCanvasElement;
+
+  beforeEach(() => {
+    canvas = createCanvas();
+  });
+
+  afterEach(() => {
+    canvas.remove();
+  });
+
+  it('xAxis.type "time" inválido gera aviso e cai para "linear"', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const chart = new LineChart(canvas, { xAxis: { type: 'bogus' as any }, autoDraw: false } as any);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('xAxis.type "bogus" is invalid'));
+    expect(chart['opts'].xAxis.type).toBe('linear');
+    warn.mockRestore();
+  });
+
+  it('gapMode inválido no chart gera aviso e cai para "break"', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const chart = new LineChart(canvas, { gapMode: 'bogus' as any, autoDraw: false } as any);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('gapMode "bogus" is invalid'));
+    expect(chart['opts'].gapMode).toBe('break');
+    warn.mockRestore();
+  });
+
+  it('gapMode inválido em uma série gera aviso e é ignorado (usa o padrão do chart)', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const chart = new LineChart(canvas, {
+      series: [{ name: 'A', color: '#f00', gapMode: 'bogus' as any }],
+      autoDraw: false,
+    } as any);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('series[0] has invalid gapMode "bogus"'));
+    expect(chart['seriesConfigs'][0].gapMode).toBeUndefined();
+    warn.mockRestore();
+  });
+
+  it('gapMode padrão do ChartOpts é "break"', () => {
+    const chart = new LineChart(canvas, { autoDraw: false } as any);
+    expect(chart['opts'].gapMode).toBe('break');
+  });
+
+  it('SeriesConfig.gapMode sobrescreve o gapMode do chart ao renderizar', () => {
+    const chart = new LineChart(canvas, {
+      series: [{ name: 'A', color: '#f00', gapMode: 'connect' }],
+      gapMode: 'break',
+      autoDraw: false,
+    } as any);
+    const x = new Float64Array([0, 1, 2]) as unknown as Float64Array<ArrayBufferLike>;
+    const y = new Float64Array([10, NaN, 30]) as unknown as Float64Array<ArrayBufferLike>;
+    chart.setData(0, x, y);
+    // draw() não deve lançar com o gapMode de série resolvido corretamente.
+    expect(() => chart.draw()).not.toThrow();
+  });
+
+  it('xAxis/yAxis/tooltip têm defaults resolvidos mesmo sem opts explícitos', () => {
+    const chart = new LineChart(canvas, { autoDraw: false } as any);
+    expect(chart['opts'].xAxis).toEqual({ type: 'linear' });
+    expect(chart['opts'].yAxis).toEqual({});
+    expect(chart['opts'].tooltip).toEqual({});
+  });
+
+  it('draw() com xAxis.type "time" e dados epoch-ms não lança', () => {
+    const chart = new LineChart(canvas, { xAxis: { type: 'time' }, autoDraw: false } as any);
+    const base = Date.UTC(2026, 0, 1);
+    const x = new Float64Array([base, base + 60_000, base + 120_000]) as unknown as Float64Array<ArrayBufferLike>;
+    const y = new Float64Array([10, 20, 30]) as unknown as Float64Array<ArrayBufferLike>;
+    chart.setData(0, x, y);
+    expect(() => chart.draw()).not.toThrow();
+  });
+
+  it('NaN em série com gapMode "break" não quebra o ciclo setData → draw', () => {
+    const chart = new LineChart(canvas, {
+      series: [{ name: 'A', color: '#f00', gapMode: 'break' }],
+      autoDraw: false,
+    } as any);
+    const x = new Float64Array([0, 1, 2, 3, 4]) as unknown as Float64Array<ArrayBufferLike>;
+    const y = new Float64Array([10, NaN, NaN, 20, 30]) as unknown as Float64Array<ArrayBufferLike>;
+    chart.setData(0, x, y);
+    expect(() => chart.draw()).not.toThrow();
+    expect(chart.pointCount(0)).toBe(5);
+  });
+});

@@ -11,6 +11,8 @@ const opts = {
   fontFamily: 'system-ui, sans-serif',
   xTicks: 8,
   yTicks: 6,
+  xAxis: { type: 'linear' },
+  yAxis: {},
 };
 
 describe('renderGrid', () => {
@@ -48,5 +50,34 @@ describe('renderAxes', () => {
     // Apenas Y ticks (sem X ticks no lado direito)
     // textAlign deve ser 'left' para o lado direito
     expect(mc.state.textAlign).toBe('left');
+  });
+
+  it('xAxis.type "time" formata os labels X como data/hora', () => {
+    const mc = createMockCtx();
+    const timeOpts = { ...opts, xAxis: { type: 'time', timeZone: 'UTC' } };
+    const d = { xMin: Date.UTC(2026, 0, 1), xMax: Date.UTC(2026, 0, 2), yMin: 0, yMax: 100 };
+    renderAxes(mc, d, plot, timeOpts as any, 'left');
+    const texts = mc.calls.fillText.map((t) => t[0]);
+    // Y labels são numéricos ("0".."100"); X labels não devem sê-lo puramente numérico.
+    const xLabels = texts.filter((t) => Number.isNaN(Number(t)));
+    expect(xLabels.length).toBeGreaterThan(0);
+  });
+
+  it('xAxis.tickFormat customizado sobrescreve o formatador padrão', () => {
+    const mc = createMockCtx();
+    const customOpts = { ...opts, xAxis: { type: 'linear', tickFormat: (v: number) => `X${v}` } };
+    const d = { xMin: 0, xMax: 100, yMin: 0, yMax: 100 };
+    renderAxes(mc, d, plot, customOpts as any, 'left');
+    const texts = mc.calls.fillText.map((t) => t[0]);
+    expect(texts.some((t) => t.startsWith('X'))).toBe(true);
+  });
+
+  it('yAxis.tickFormat customizado sobrescreve o formatador padrão', () => {
+    const mc = createMockCtx();
+    const customOpts = { ...opts, yAxis: { tickFormat: (v: number) => `Y${v}` } };
+    const d = { xMin: 0, xMax: 100, yMin: 0, yMax: 100 };
+    renderAxes(mc, d, plot, customOpts as any, 'left');
+    const texts = mc.calls.fillText.map((t) => t[0]);
+    expect(texts.some((t) => t.startsWith('Y'))).toBe(true);
   });
 });

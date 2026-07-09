@@ -89,6 +89,10 @@ interface SeriesConfig {
   yMin?: number;
   /** Fixed Y upper bound for this series only (overrides the grid domain). */
   yMax?: number;
+  /** Per-series override of the tooltip value formatter. Takes precedence over ChartOpts.tooltip.valueFormat. */
+  valueFormat?: (value: number) => string;
+  /** Per-series override of ChartOpts.gapMode. */
+  gapMode?: 'break' | 'connect' | 'zero';
 }
 ```
 
@@ -341,43 +345,49 @@ chart.off('frameappended', myHandler);
 
 ### `ChartOpts` (constructor)
 
-| Option           | Default                                    | Description                                            |
-| ---------------- | ------------------------------------------ | ------------------------------------------------------ |
-| `series`         | `[{ name: 'Series 0', color: '#4ea8ff' }]` | Array of per-series visual configs                     |
-| `padding`        | `[16, 16, 32, 56]`                         | `[top, right, bottom, left]` in CSS pixels             |
-| `gridColor`      | `rgba(255,255,255,0.08)`                   | Dashed internal grid line colour                       |
-| `axisColor`      | `rgba(255,255,255,0.25)`                   | Grid frame stroke colour                               |
-| `textColor`      | `rgba(255,255,255,0.5)`                    | Tick labels, legend text, tooltip labels               |
-| `fontSize`       | `11`                                       | Base font size for all text                            |
-| `fontFamily`     | `system-ui, …`                             | Font stack for all text                                |
-| `bgColor`        | `'#111'`                                   | Canvas background fill                                 |
-| `crosshairColor` | `rgba(255,255,255,0.3)`                    | Crosshair guide line colour                            |
-| `crosshairWidth` | `1`                                        | Crosshair guide line width                             |
-| `pointRadius`    | `4`                                        | Crosshair marker dot radius                            |
-| `xTicks`         | `8`                                        | Approximate X-axis tick count                          |
-| `yTicks`         | `6`                                        | Approximate Y-axis tick count                          |
-| `maxPoints`      | `0`                                        | Activate ring streaming mode (0 = off)                 |
-| `autoDraw`       | `false`                                    | Coalesce data changes into one rAF draw                |
-| `yMin`           | `0`                                        | Fixed Y-axis lower bound (0 = auto). Pair with `yMax`. |
-| `yMax`           | `0`                                        | Fixed Y-axis upper bound (0 = auto). Pair with `yMin`. |
-| `maxDots`        | `2000`                                     | Max dots before scatter chart stride-thinning kicks in |
-| `lineColor`      | `#4ea8ff`                                  | Fallback line colour                                   |
-| `lineWidth`      | `1.5`                                      | Fallback line width                                    |
-| `fillColor`      | `#4ea8ff`                                  | Fallback area fill                                     |
-| `fillOpacity`    | `0.15`                                     | Fallback area fill opacity                             |
-| `pointColor`     | `#4ea8ff`                                  | Fallback crosshair dot colour                          |
+| Option           | Default                                    | Description                                                                                                  |
+| ---------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `series`         | `[{ name: 'Series 0', color: '#4ea8ff' }]` | Array of per-series visual configs                                                                           |
+| `padding`        | `[16, 16, 32, 56]`                         | `[top, right, bottom, left]` in CSS pixels                                                                   |
+| `gridColor`      | `rgba(255,255,255,0.08)`                   | Dashed internal grid line colour                                                                             |
+| `axisColor`      | `rgba(255,255,255,0.25)`                   | Grid frame stroke colour                                                                                     |
+| `textColor`      | `rgba(255,255,255,0.5)`                    | Tick labels, legend text, tooltip labels                                                                     |
+| `fontSize`       | `11`                                       | Base font size for all text                                                                                  |
+| `fontFamily`     | `system-ui, …`                             | Font stack for all text                                                                                      |
+| `bgColor`        | `'#111'`                                   | Canvas background fill                                                                                       |
+| `crosshairColor` | `rgba(255,255,255,0.3)`                    | Crosshair guide line colour                                                                                  |
+| `crosshairWidth` | `1`                                        | Crosshair guide line width                                                                                   |
+| `pointRadius`    | `4`                                        | Crosshair marker dot radius                                                                                  |
+| `xTicks`         | `8`                                        | Approximate X-axis tick count                                                                                |
+| `yTicks`         | `6`                                        | Approximate Y-axis tick count                                                                                |
+| `maxPoints`      | `0`                                        | Activate ring streaming mode (0 = off)                                                                       |
+| `autoDraw`       | `false`                                    | Coalesce data changes into one rAF draw                                                                      |
+| `yMin`           | `0`                                        | Fixed Y-axis lower bound (0 = auto). Pair with `yMax`.                                                       |
+| `yMax`           | `0`                                        | Fixed Y-axis upper bound (0 = auto). Pair with `yMin`.                                                       |
+| `maxDots`        | `2000`                                     | Max dots before scatter chart stride-thinning kicks in                                                       |
+| `lineColor`      | `#4ea8ff`                                  | Fallback line colour                                                                                         |
+| `lineWidth`      | `1.5`                                      | Fallback line width                                                                                          |
+| `fillColor`      | `#4ea8ff`                                  | Fallback area fill                                                                                           |
+| `fillOpacity`    | `0.15`                                     | Fallback area fill opacity                                                                                   |
+| `pointColor`     | `#4ea8ff`                                  | Fallback crosshair dot colour                                                                                |
+| `xAxis`          | `{ type: 'linear' }`                       | X-axis scale type, tick formatter, and time zone — see [Time axis and formatters](#time-axis-and-formatters) |
+| `yAxis`          | `{}`                                       | Y-axis tick formatter (shared by both left and right axes)                                                   |
+| `tooltip`        | `{}`                                       | Crosshair tooltip value/X formatter                                                                          |
+| `gapMode`        | `'break'`                                  | Chart-wide default for how a series renders `NaN` samples — see [Missing data (gaps)](#missing-data-gaps)    |
 
 ### `SeriesConfig` (per series)
 
-| Field         | Required | Default                 | Description                                              |
-| ------------- | -------- | ----------------------- | -------------------------------------------------------- |
-| `name`        | yes      | —                       | Legend and tooltip label                                 |
-| `color`       | yes      | —                       | Line, dot, and legend swatch colour                      |
-| `lineWidth`   | no       | `ChartOpts.lineWidth`   | Stroke width                                             |
-| `dash`        | no       | —                       | Dash pattern, e.g. `[8, 4]` for dashed lines             |
-| `fillColor`   | no       | `ChartOpts.fillColor`   | Area fill colour                                         |
-| `fillOpacity` | no       | `ChartOpts.fillOpacity` | Area fill opacity                                        |
-| `yAxis`       | no       | `'left'`                | Which Y axis this series maps to (`'left'` \| `'right'`) |
+| Field         | Required | Default                 | Description                                                                            |
+| ------------- | -------- | ----------------------- | -------------------------------------------------------------------------------------- |
+| `name`        | yes      | —                       | Legend and tooltip label                                                               |
+| `color`       | yes      | —                       | Line, dot, and legend swatch colour                                                    |
+| `lineWidth`   | no       | `ChartOpts.lineWidth`   | Stroke width                                                                           |
+| `dash`        | no       | —                       | Dash pattern, e.g. `[8, 4]` for dashed lines                                           |
+| `fillColor`   | no       | `ChartOpts.fillColor`   | Area fill colour                                                                       |
+| `fillOpacity` | no       | `ChartOpts.fillOpacity` | Area fill opacity                                                                      |
+| `yAxis`       | no       | `'left'`                | Which Y axis this series maps to (`'left'` \| `'right'`)                               |
+| `valueFormat` | no       | —                       | Per-series tooltip value formatter (overrides `ChartOpts.tooltip.valueFormat`)         |
+| `gapMode`     | no       | `ChartOpts.gapMode`     | Per-series override of how `NaN` samples render (`'break'` \| `'connect'` \| `'zero'`) |
 
 ---
 
@@ -386,6 +396,77 @@ chart.off('frameappended', myHandler);
 The grid is intentionally stable — it does not recompute a tight Y range on every append. Instead the grid domain locks to the data extent on the first draw and only expands when the data exceeds it (with a 10 % margin). The grid **never shrinks**, keeping horizontal reference lines stationary so the eye tracks movement inside a stable frame.
 
 The grid itself is a dashed internal lattice plus a closed rectangular frame drawn via `strokeRect`. The frame replaces old-style axis strokes — tick labels sit outside the frame with no extra axis lines.
+
+---
+
+## Time axis and formatters
+
+By default the X axis treats values as plain numbers (`xAxis.type: 'linear'`, the default). Set `type: 'time'` to treat X values as epoch milliseconds — ticks then snap to calendar-sensible steps (second → minute → hour → day/week → month/quarter → year) instead of arbitrary linear divisions, and labels default to a granularity-matched date/time format.
+
+> `'band'` is also a valid `ScaleType` value (reserved for the v1.9.0 bar chart). It is recognised by the public type now so consumers can reference it without a breaking change later, but using it at runtime throws until the implementation lands.
+
+```ts
+const chart = new LineChart(canvas, {
+  xAxis: {
+    type: 'time',
+    // Only affects the built-in default formatter — has no effect when
+    // tickFormat is supplied; the library does not implement general time
+    // zone conversion.
+    timeZone: 'America/Sao_Paulo',
+  },
+});
+```
+
+Every axis and the tooltip accept a custom formatter. Formatters are presentation-only — they never mutate the stored numeric value:
+
+```ts
+const chart = new LineChart(canvas, {
+  xAxis: {
+    type: 'time',
+    tickFormat: (ms) => new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' }).format(ms),
+  },
+  yAxis: {
+    tickFormat: (value) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value),
+  },
+  tooltip: {
+    xFormat: (ms) => new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'medium' }).format(ms),
+    valueFormat: ({ value, series }) => `${series.name}: ${value.toFixed(1)}`,
+  },
+  series: [{ name: 'Price', color: '#4ea8ff', valueFormat: (value) => `$${value.toFixed(2)}` }],
+});
+```
+
+Formatter precedence for the tooltip value: `SeriesConfig.valueFormat` → `ChartOpts.tooltip.valueFormat` → the built-in default. Axis tick labels follow `xAxis.tickFormat` / `yAxis.tickFormat` → the built-in default (time-aware when `xAxis.type: 'time'`, plain number formatting otherwise).
+
+---
+
+## Missing data (gaps)
+
+Use `NaN` in a series' Y array to represent a missing sample. `NaN` never participates in the grid domain, stacking, or the crosshair tooltip regardless of `gapMode` — only how the _gap itself_ renders is controlled by `gapMode`:
+
+```ts
+type GapMode = 'break' | 'connect' | 'zero';
+```
+
+- `'break'` (default): lifts the pen — no line or fill crosses the gap.
+- `'connect'`: skips the missing sample so its valid neighbours join directly.
+- `'zero'`: treats the missing sample as `0` for rendering only; the stored data is never mutated.
+
+`gapMode` can be set chart-wide (`ChartOpts.gapMode`) or per series (`SeriesConfig.gapMode`, which takes precedence):
+
+```ts
+const chart = new LineChart(canvas, {
+  gapMode: 'break',
+  series: [
+    { name: 'Sensor A', color: '#4ea8ff' }, // uses the chart-wide 'break'
+    { name: 'Sensor B', color: '#52d4a0', gapMode: 'connect' },
+  ],
+});
+
+const y = new Float64Array([10, 12, Number.NaN, Number.NaN, 17]) as unknown as Float64Array<ArrayBufferLike>;
+```
+
+Stacked series (`AreaChart` with a shared `stack` id): a `NaN` sample in one layer contributes `0` to that layer's cumulative sum at that index instead of poisoning every later cumulative value.
 
 ---
 

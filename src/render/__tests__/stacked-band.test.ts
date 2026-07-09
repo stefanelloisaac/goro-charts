@@ -81,4 +81,37 @@ describe('renderStackedBands', () => {
       expect(y).toBeLessThanOrEqual(bottom);
     }
   });
+
+  it('NaN em uma camada não envenena o cumulativo das amostras seguintes (regressão)', () => {
+    const mc = createMockCtx();
+    // Sem a correção, `running[j] += NaN` faria toda amostra a partir do
+    // índice do gap virar NaN pelo resto da série — o teste prova que as
+    // amostras depois do gap voltam a ter posições Y finitas e coerentes.
+    const stores = [makeStore([0, 50, 100], [10, NaN, 10]), makeStore([0, 50, 100], [5, 5, 5])];
+    renderStackedBands(mc, stores, styles, plot, domain);
+    const ys = [...mc.calls.moveTo, ...mc.calls.lineTo].map(([, y]) => y);
+    expect(ys.length).toBeGreaterThan(0);
+    for (const y of ys) {
+      expect(Number.isNaN(y)).toBe(false);
+    }
+  });
+
+  it('regime denso: NaN em uma coluna de uma camada não envenena colunas seguintes (regressão)', () => {
+    const mc = createMockCtx();
+    const N = 5000;
+    const gapStart = Math.floor(N * 0.4);
+    const gapEnd = gapStart + 100;
+    const xs = Array.from({ length: N }, (_, i) => (i / (N - 1)) * 100);
+    const ysLayer0 = Array.from({ length: N }, (_, i) =>
+      i >= gapStart && i < gapEnd ? NaN : 20 + Math.sin(i * 0.05) * 10,
+    );
+    const ysLayer1 = Array.from({ length: N }, () => 5);
+    const stores = [makeStore(xs, ysLayer0), makeStore(xs, ysLayer1)];
+    renderStackedBands(mc, stores, styles, plot, domain);
+    const ys = [...mc.calls.moveTo, ...mc.calls.lineTo].map(([, y]) => y);
+    expect(ys.length).toBeGreaterThan(0);
+    for (const y of ys) {
+      expect(Number.isNaN(y)).toBe(false);
+    }
+  });
 });

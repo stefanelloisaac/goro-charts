@@ -5,6 +5,45 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] — 2026-07-09
+
+### Added
+
+- **Time axis.** `xAxis: { type: 'time' }` treats X values as epoch
+  milliseconds and generates calendar-aware ticks (second → minute → hour →
+  day/week → month/quarter → year) instead of arbitrary linear divisions.
+  Fixed-ms tiers are used up to ~2 weeks per tick; coarser spans walk real
+  UTC calendar boundaries (month/quarter/year) so labels never drift.
+  `xAxis.timeZone` forwards to the built-in default time formatter only.
+- **Formatters.** `xAxis.tickFormat`, `yAxis.tickFormat`, `tooltip.xFormat`,
+  `tooltip.valueFormat`, and `SeriesConfig.valueFormat` let axis labels and
+  the crosshair tooltip render custom string representations without ever
+  mutating the underlying numeric value. Tooltip value precedence:
+  `SeriesConfig.valueFormat` → `ChartOpts.tooltip.valueFormat` → the
+  built-in default.
+- **`gapMode` (missing data).** `ChartOpts.gapMode` (chart-wide default) and
+  `SeriesConfig.gapMode` (per-series override, takes precedence) control how
+  a `NaN` Y sample renders: `'break'` (default) lifts the pen so no line or
+  fill crosses the gap; `'connect'` skips the missing sample so its valid
+  neighbours join directly; `'zero'` treats it as `0` for rendering only —
+  the stored data is never mutated. Implemented across `LineChart`,
+  `AreaChart` (sparse + decimated regimes, and its stacked-band path), and
+  `ScatterChart`.
+- New public types: `ScaleType`, `GapMode`, `XAxisConfig`, `YAxisConfig`,
+  `TooltipConfig`. `ScaleType` is `'linear' | 'time' | 'band'` — `'band'` is
+  recognised and accepted by the type system (reserved for the v1.9.0 bar
+  chart); using it at runtime throws a descriptive error until the
+  implementation lands.
+
+### Fixed
+
+- **Stacked-area NaN poisoning.** A `NaN` sample in one layer of a stacked
+  group no longer corrupts every later cumulative value for the rest of the
+  series (`running[j] += NaN` previously propagated `NaN` forward
+  indefinitely once a gap occurred). A gap sample now contributes `0` to its
+  layer's cumulative sum at that index — the documented stacking-gap
+  contract.
+
 ## [1.5.0] — 2026-07-07
 
 ### Added
