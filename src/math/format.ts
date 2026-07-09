@@ -36,10 +36,10 @@ function unitToIntlOptions(unit: TimeTickUnit): Intl.DateTimeFormatOptions {
   switch (unit) {
     case 'ms':
     case 'second':
-      return { hour: '2-digit', minute: '2-digit', second: '2-digit' };
+      return { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' };
     case 'minute':
     case 'hour':
-      return { hour: '2-digit', minute: '2-digit' };
+      return { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' };
     case 'day':
     case 'week':
       return { month: 'short', day: 'numeric' };

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.6.0] — 2026-07-09
 
+### Fixed
+
+- **`formatTimeTick` inconsistente entre locales.** O formatador interno de
+  eixo temporal usava `Intl.DateTimeFormat(undefined, …)`, que delega o
+  ciclo horário (12h vs 24h) ao locale do _host_ — `en-US` produzia
+  `'02:30 PM'` em vez de `'14:30'`, quebrando 3 testes no CI. Adicionado
+  `hourCycle: 'h23'` às opções de `ms`/`second`/`minute`/`hour` para
+  forçar saída 24h determinística.
+
 ### Added
 
 - **Time axis.** `xAxis: { type: 'time' }` treats X values as epoch
