@@ -1,6 +1,6 @@
 {
   "name": "goro-charts",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Minimal high-performance line and area chart engine. Canvas 2D, zero dependencies, framework-agnostic.",
   "type": "module",
   "license": "MIT",
@@ -60,10 +60,42 @@
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage",
+    "size": "size-limit",
+    "size:why": "size-limit --why",
     "bench": "node scripts/bench.mjs"
   },
+  "size-limit": [
+    {
+      "name": "core (full bundle)",
+      "path": "dist/goro-charts.js",
+      "limit": "25 kB",
+      "gzip": true
+    },
+    {
+      "name": "LineChart",
+      "path": "dist/goro-charts.js",
+      "import": "{ LineChart }",
+      "limit": "22 kB",
+      "gzip": true
+    },
+    {
+      "name": "AreaChart",
+      "path": "dist/goro-charts.js",
+      "import": "{ AreaChart }",
+      "limit": "22 kB",
+      "gzip": true
+    },
+    {
+      "name": "ScatterChart",
+      "path": "dist/goro-charts.js",
+      "import": "{ ScatterChart }",
+      "limit": "22 kB",
+      "gzip": true
+    }
+  ],
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@size-limit/preset-small-lib": "^11.2.0",
     "@types/node": "^26.1.0",
     "@vitest/coverage-v8": "^4.1.9",
     "@vitest/ui": "^4.1.9",
@@ -71,6 +103,7 @@
     "globals": "^17.7.0",
     "happy-dom": "^20.10.6",
     "prettier": "^3.9.4",
+    "size-limit": "^11.2.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.62.1",
     "vite": "^8.1.3",

@@ -539,8 +539,9 @@ A `stack` group with fewer than two populated series falls back to a normal
 
 Like `LineChart` / `AreaChart`, stacked bands auto-switch to per-pixel-column
 min/max decimation once a layer is denser than 2× the plot width, so large
-windows (tens of thousands of points per series) stay cheap — the draw cost is
-flat regardless of window size.
+windows (tens of thousands of points per series) stay cheap — the cost is
+bounded by the visible vertex count (~2× the plot width) rather than the total
+data size.
 
 ---
 
