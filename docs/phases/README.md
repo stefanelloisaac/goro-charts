@@ -40,8 +40,9 @@ estado atual como **pré-estável**:
 | [1.5.0](./v1.5.0-streaming-eventos.md)  | Fase 2      | `appendFrame`, eventos tipados, modelo de invalidação        | P1         | médio    |
 | [1.6.0](./v1.6.0-eixo-temporal.md)      | Fase 3      | Eixo temporal, formatadores, dados ausentes, escala plugável | P1         | médio    |
 | [1.7.0](./v1.7.0-viewport-zoom-pan.md)  | Fase 3      | Viewport, zoom, pan, Pointer Events, touch                   | P1         | **alto** |
-| [1.8.0](./v1.8.0-performance.md)        | Fase 4      | Benchmarks reais, Playwright, uPlot, bundle budget           | —          | médio    |
-| [1.9.0](./v1.9.0-expansao.md)           | Fase 5      | Bar chart, anotações, subpath exports, CSV                   | P2         | médio    |
+| [1.8.0](./v1.8.0-performance.md)        | Fase 4      | Bundle budget e linguagem de performance precisa             | —          | baixo    |
+| [1.9.0](./v1.9.0-render-performance.md) | Fase 4/5    | Pipeline de render incremental para streaming                | P1         | **alto** |
+| [1.10.0](./v1.10.0-expansao.md)         | Fase 5      | Bar chart, anotações, subpath exports, CSV                   | P2         | médio    |
 
 ---
 
