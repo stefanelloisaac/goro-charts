@@ -42,8 +42,62 @@ import type {
   ChartEventType,
   ChartEventListener,
   ChartFrameValues,
+  Viewport,
 } from '../types.ts';
 import type { SeriesHit } from '../render/crosshair.ts';
+
+/**
+ * Reusable {@link SeriesView} instance for the render/crosshair hot path.
+ * Fields are plain data (`xMin`/`xMax`/`yMin`/`yMax`/`xArr`/`yArr`/`head`/
+ * `count`/`cap`); `physOf` and `bracketLogical` delegate to the bound store
+ * so ring wraparound still works. Calling {@link bind} rewrites the fields
+ * in place and returns `this`, so a `ChartBase` can reuse the same instance
+ * across frames instead of allocating a new proxy per series per frame.
+ *
+ * See the doc block on {@link ChartBase.viewSlotRender} for the pool
+ * layout and why two pools (one for render, one for crosshair) are needed.
+ */
+class PooledView implements SeriesView {
+  xArr!: Float64Array<ArrayBufferLike>;
+  yArr!: Float64Array<ArrayBufferLike>;
+  head = 0;
+  count = 0;
+  cap = 0;
+  xMin = 0;
+  xMax = 0;
+  yMin = 0;
+  yMax = 0;
+  private store!: SeriesView;
+
+  bind(
+    store: SeriesView,
+    xMin: number,
+    xMax: number,
+    yMin: number,
+    yMax: number,
+    yArrOverride?: Float64Array<ArrayBufferLike>,
+  ): this {
+    this.store = store;
+    this.xArr = store.xArr;
+    this.yArr = yArrOverride ?? store.yArr;
+    this.head = store.head;
+    this.count = store.count;
+    this.cap = store.cap;
+    this.xMin = xMin;
+    this.xMax = xMax;
+    this.yMin = yMin;
+    this.yMax = yMax;
+    return this;
+  }
+
+  physOf(logical: number): number {
+    return this.store.physOf(logical);
+  }
+
+  bracketLogical(target: number): number {
+    return this.store.bracketLogical(target);
+  }
+}
 
 /** Abstract base for all chart types. */
 export abstract class ChartBase {
@@ -59,6 +113,14 @@ export abstract class ChartBase {
   private gridDomainRight: Domain = { xMin: 0, xMax: 0, yMin: 0, yMax: 0 };
   private gridPinned = false;
   private hasRightAxis = false;
+
+  /**
+   * User-controlled X viewport (v1.7.0). When set, it is the highest-priority
+   * source of truth for the X domain — {@link updateGridDomain} short-circuits
+   * on it before touching streaming / `fixedY` / `gridPinned` logic. `null`
+   * means "no viewport" (auto/streaming domain as before).
+   */
+  private viewport: Viewport | null = null;
 
   /**
    * Cached stack-group detection. `seriesConfigs` is immutable after the
@@ -83,10 +145,33 @@ export abstract class ChartBase {
   private listeners: Record<ChartEventType, Set<ChartEventListener<ChartEventType>>> = {
     frameappended: new Set(),
     destroy: new Set(),
+    viewportchange: new Set(),
   };
   private cursorX = -1;
   private cursorY = -1;
   private showCrosshair = false;
+
+  /** True while a pointer-drag pan gesture is active (set on pointerdown inside the plot). */
+  private dragging = false;
+  /** Pixel X of the pointer at the last pointermove during a drag, used to compute the pan delta. */
+  private dragLastPx = -1;
+
+  /**
+   * v1.7.0: active pointers currently down inside the plot, keyed by
+   * pointerId. Populated on pointerdown, removed on pointerup / cancel.
+   * Used to detect the two-finger pinch gesture (touchpad or touchscreen)
+   * — while exactly two pointers are down, pointermove computes zoom from
+   * the distance between them and pan from their centroid.
+   */
+  private activePointers = new Map<number, { pxX: number; pxY: number }>();
+  /**
+   * Snapshot of the two-pointer state at the start of the pinch gesture
+   * (or the last pointermove during the gesture): distance in CSS pixels
+   * between the two pointers and centroid x. Reset when the gesture ends.
+   */
+  private pinchLastDist = 0;
+  private pinchLastCentroidX = 0;
+  private pinching = false;
 
   /**
    * Tracks whether the previous draw() painted a crosshair overlay. Lets draw()
@@ -103,6 +188,21 @@ export abstract class ChartBase {
   private suspendCount = 0;
   private syncTargets = new Set<ChartBase>();
 
+  /**
+   * v1.7.0 interaction repaint coalescing. Wheel and pointermove handlers
+   * fire multiple times per frame on modern input devices (120Hz+ touchpads
+   * and free-spin mouse wheels can emit 5-10 events per display refresh).
+   * State mutations (viewport, cursor) still happen synchronously in the
+   * handlers so `getViewport()` and friends reflect the latest gesture
+   * immediately, but the actual repaint is coalesced into a single rAF
+   * callback via {@link scheduleInteractionFrame} so the render pipeline
+   * runs at most once per frame.
+   *
+   * Separate from {@link rafScheduled}, which is only used when `autoDraw`
+   * is true and reflects data mutations.
+   */
+  private interactionRafId = 0;
+
   private resizeObserver: ResizeObserver | null = null;
   protected destroyed = false;
   private liveRegion: HTMLElement | null = null;
@@ -117,9 +217,19 @@ export abstract class ChartBase {
     this.draw();
   };
   private readonly handleResize = () => this.onResize();
-  private readonly handleMouseMove = (e: MouseEvent) => this.onMouseMove(e);
-  private readonly handleMouseLeave = () => this.onMouseLeave();
+  private readonly handlePointerMove = (e: PointerEvent) => this.onPointerMove(e);
+  private readonly handlePointerDown = (e: PointerEvent) => this.onPointerDown(e);
+  private readonly handlePointerUp = (e: PointerEvent) => this.onPointerUp(e);
+  private readonly handlePointerLeave = () => this.onPointerLeave();
+  private readonly handleWheel = (e: WheelEvent) => this.onWheel(e);
   private readonly handleKeyDown = (e: KeyboardEvent) => this.onKeyDown(e);
+  /**
+   * Invalidate the surface's cached canvas position. Scrolling the page
+   * moves the canvas in the viewport without triggering resize, and
+   * pointer/wheel handlers rely on the cached rect to translate clientX/Y
+   * to canvas-local pixels — a stale rect turns into a stuck cursor.
+   */
+  private readonly handleWindowLayoutShift = () => this.surface.invalidateClientRect();
 
   constructor(canvas: HTMLCanvasElement, opts?: ChartOpts) {
     this.opts = { ...CHART_DEFAULTS, ...opts };
@@ -401,6 +511,7 @@ export abstract class ChartBase {
       throw new Error(`series ${this.refLabel(ref)}: ${(e as Error).message}`, { cause: e });
     }
     this.gridPinned = false;
+    this.reclampViewportToExtent();
     this.invalidate();
   }
 
@@ -419,6 +530,7 @@ export abstract class ChartBase {
     } catch (e) {
       throw new Error(`series ${this.refLabel(ref)}: ${(e as Error).message}`, { cause: e });
     }
+    this.reclampViewportToExtent();
     this.invalidate();
   }
 
@@ -437,6 +549,7 @@ export abstract class ChartBase {
     } catch (e) {
       throw new Error(`series ${this.refLabel(ref)}: ${(e as Error).message}`, { cause: e });
     }
+    this.reclampViewportToExtent();
     this.invalidate();
   }
 
@@ -527,6 +640,7 @@ export abstract class ChartBase {
 
     // ---- Phase 4: one invalidation, one event -------------------------------
     const seriesUpdated = parsed.length + carried;
+    this.reclampViewportToExtent();
     this.invalidate('layout');
     const render = this.autoDraw && this.suspendCount === 0;
     this.emit('frameappended', { seriesUpdated, render });
@@ -540,6 +654,7 @@ export abstract class ChartBase {
   setMaxPoints(maxPoints: number): void {
     if (this.destroyed) return;
     for (const s of this.stores) s.setMaxPoints(maxPoints);
+    this.reclampViewportToExtent();
     this.invalidate();
   }
 
@@ -549,6 +664,7 @@ export abstract class ChartBase {
     for (const s of this.stores) s.clear();
     this.gridPinned = false;
     this.stackWarned.clear();
+    this.reclampViewportToExtent();
     this.invalidate();
   }
 
@@ -856,6 +972,180 @@ export abstract class ChartBase {
    */
   onHover?: (hits: SeriesHit[]) => void;
 
+  // ---- Viewport (v1.7.0) ----------------------------------------------------
+
+  /**
+   * Set a user-controlled X viewport. Overrides the chart's auto/streaming X
+   * domain until {@link resetViewport} is called — see
+   * {@link updateGridDomain} for the priority rule. Clamped to the union X
+   * extent of the visible series; a window wider than the data collapses to
+   * the full extent (equivalent to {@link resetViewport}).
+   * @throws {Error} if `xMin`/`xMax` are not finite or `xMin >= xMax`.
+   */
+  setViewport(v: Viewport): void {
+    if (this.destroyed) return;
+    if (!Number.isFinite(v.xMin) || !Number.isFinite(v.xMax) || v.xMin >= v.xMax) {
+      throw new Error('[goro-charts] setViewport requires finite xMin < xMax');
+    }
+    const extent = this.dataXExtent();
+    let { xMin, xMax } = v;
+    if (extent) {
+      if (xMin <= extent.xMin && xMax >= extent.xMax) {
+        this.resetViewport();
+        return;
+      }
+      if (xMin < extent.xMin) {
+        xMax = Math.min(extent.xMax, xMax + (extent.xMin - xMin));
+        xMin = extent.xMin;
+      }
+      if (xMax > extent.xMax) {
+        xMin = Math.max(extent.xMin, xMin - (xMax - extent.xMax));
+        xMax = extent.xMax;
+      }
+    }
+    // Preserve `yAuto` from either the incoming value or the current
+    // viewport — a zoom-then-pan sequence shouldn't reset it, and applyZoom
+    // / applyPan don't know about it (they only forward xMin/xMax).
+    const yAuto = v.yAuto ?? this.viewport?.yAuto;
+    this.viewport = yAuto !== undefined ? { xMin, xMax, yAuto } : { xMin, xMax };
+    this.invalidate('layout');
+    this.emit('viewportchange', { xMin, xMax });
+  }
+
+  /** Current viewport, or `null` when unset (auto/streaming domain). */
+  getViewport(): Viewport | null {
+    return this.viewport ? { ...this.viewport } : null;
+  }
+
+  /** Clear the viewport and restore the full data domain. */
+  resetViewport(): void {
+    if (this.destroyed) return;
+    if (!this.viewport) return;
+    this.viewport = null;
+    this.invalidate('layout');
+    const extent = this.dataXExtent();
+    this.emit('viewportchange', extent ? { xMin: extent.xMin, xMax: extent.xMax } : { xMin: 0, xMax: 0 });
+  }
+
+  /**
+   * v1.7.0: keep the viewport aligned with the data extent when streaming
+   * (or any external mutation) slides it. Without this, an active viewport
+   * whose window falls entirely outside the current ring buffer would leave
+   * the chart pointing at empty space — nothing to draw, but the domain
+   * still reports the stale window. The rule mirrors {@link applyPan}:
+   *
+   * - If the viewport still fits inside the extent, do nothing.
+   * - If it collides with an edge, shift it back into range while
+   *   preserving its width (streaming feel).
+   * - If it's now wider than the extent, drop it and restore auto.
+   *
+   * Called by `append` / `appendBatch` / `appendFrame` / `setMaxPoints` /
+   * `clear` after the store mutation. Emits `viewportchange` when the
+   * viewport actually moved.
+   */
+  private reclampViewportToExtent(): void {
+    if (!this.viewport) return;
+    const extent = this.dataXExtent();
+    if (!extent) {
+      // No data left after mutation — restore full auto-domain.
+      this.viewport = null;
+      this.emit('viewportchange', { xMin: 0, xMax: 0 });
+      return;
+    }
+    let { xMin, xMax } = this.viewport;
+    const width = xMax - xMin;
+    const extentWidth = extent.xMax - extent.xMin;
+    if (width >= extentWidth) {
+      // Window is now wider than the whole extent — auto is a better fit.
+      this.viewport = null;
+      this.emit('viewportchange', { xMin: extent.xMin, xMax: extent.xMax });
+      return;
+    }
+    let moved = false;
+    if (xMin < extent.xMin) {
+      xMax += extent.xMin - xMin;
+      xMin = extent.xMin;
+      moved = true;
+    }
+    if (xMax > extent.xMax) {
+      xMin -= xMax - extent.xMax;
+      xMax = extent.xMax;
+      moved = true;
+    }
+    if (xMin < extent.xMin) xMin = extent.xMin;
+    if (xMax > extent.xMax) xMax = extent.xMax;
+    if (!moved) return;
+    const yAuto = this.viewport.yAuto;
+    this.viewport = yAuto !== undefined ? { xMin, xMax, yAuto } : { xMin, xMax };
+    this.emit('viewportchange', { xMin, xMax });
+  }
+
+  /** Union X extent of every visible series, or `null` when there is no visible data. */
+  private dataXExtent(): { xMin: number; xMax: number } | null {
+    let xMin = Infinity;
+    let xMax = -Infinity;
+    for (let i = 0; i < this.stores.length; i++) {
+      if (!this.isVisible(i)) continue;
+      const s = this.stores[i];
+      if (s.xMin < xMin) xMin = s.xMin;
+      if (s.xMax > xMax) xMax = s.xMax;
+    }
+    return xMin <= xMax ? { xMin, xMax } : null;
+  }
+
+  /**
+   * Zoom around the data-x under `pxX` (a CSS-pixel X within the plot area)
+   * by `factor` (`< 1` zooms in, `> 1` zooms out). The point under `pxX`
+   * stays fixed on screen. Zooming out past the full data extent clears the
+   * viewport.
+   */
+  private applyZoom(pxX: number, factor: number): void {
+    const extent = this.dataXExtent();
+    if (!extent) return;
+    const cur = this.viewport ?? extent;
+    if (cur.xMax <= cur.xMin) return;
+    const plot = this.plotRect();
+    const anchorX = pxToX(pxX, { xMin: cur.xMin, xMax: cur.xMax, yMin: 0, yMax: 0 }, plot, this.opts.xAxis.type);
+    let nxMin = anchorX - (anchorX - cur.xMin) * factor;
+    let nxMax = anchorX + (cur.xMax - anchorX) * factor;
+    if (nxMin >= nxMax) return;
+    if (nxMin <= extent.xMin && nxMax >= extent.xMax) {
+      this.resetViewport();
+      return;
+    }
+    if (nxMin < extent.xMin) nxMin = extent.xMin;
+    if (nxMax > extent.xMax) nxMax = extent.xMax;
+    if (nxMin >= nxMax) return;
+    this.setViewport({ xMin: nxMin, xMax: nxMax });
+  }
+
+  /** Pan the current window by `dxPx` CSS pixels (positive = drag right = look further left). */
+  private applyPan(dxPx: number): void {
+    const extent = this.dataXExtent();
+    if (!extent) return;
+    const cur = this.viewport ?? extent;
+    const range = cur.xMax - cur.xMin;
+    if (range <= 0) return;
+    const plot = this.plotRect();
+    if (plot.w <= 0) return;
+    const dx = -(dxPx / plot.w) * range;
+    let nxMin = cur.xMin + dx;
+    let nxMax = cur.xMax + dx;
+    // Shift-clamp: preserve window width at the domain edges.
+    if (nxMin < extent.xMin) {
+      nxMax += extent.xMin - nxMin;
+      nxMin = extent.xMin;
+    }
+    if (nxMax > extent.xMax) {
+      nxMin -= nxMax - extent.xMax;
+      nxMax = extent.xMax;
+    }
+    nxMin = Math.max(nxMin, extent.xMin);
+    nxMax = Math.min(nxMax, extent.xMax);
+    if (nxMin >= nxMax) return;
+    this.setViewport({ xMin: nxMin, xMax: nxMax });
+  }
+
   // ---- Rendering -----------------------------------------------------------
 
   /** Paint the chart. Cheap to call repeatedly: returns early when clean. */
@@ -929,17 +1219,28 @@ export abstract class ChartBase {
     // Clear listeners after emit so the destroy event reaches them.
     this.listeners.frameappended.clear();
     this.listeners.destroy.clear();
+    this.listeners.viewportchange.clear();
     if (this.rafScheduled) {
       cancelAnimationFrame(this.rafScheduled);
       this.rafScheduled = 0;
+    }
+    if (this.interactionRafId) {
+      cancelAnimationFrame(this.interactionRafId);
+      this.interactionRafId = 0;
     }
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.reducedMotionMql?.removeEventListener('change', this.handleReducedMotionChange);
     this.reducedMotionMql = null;
-    this.surface.canvas.removeEventListener('mousemove', this.handleMouseMove);
-    this.surface.canvas.removeEventListener('mouseleave', this.handleMouseLeave);
+    this.surface.canvas.removeEventListener('pointermove', this.handlePointerMove);
+    this.surface.canvas.removeEventListener('pointerdown', this.handlePointerDown);
+    this.surface.canvas.removeEventListener('pointerup', this.handlePointerUp);
+    this.surface.canvas.removeEventListener('pointercancel', this.handlePointerUp);
+    this.surface.canvas.removeEventListener('pointerleave', this.handlePointerLeave);
+    this.surface.canvas.removeEventListener('wheel', this.handleWheel);
     this.surface.canvas.removeEventListener('keydown', this.handleKeyDown);
+    window.removeEventListener('scroll', this.handleWindowLayoutShift, { capture: true } as EventListenerOptions);
+    window.removeEventListener('resize', this.handleWindowLayoutShift);
     this.liveRegion?.remove();
     this.liveRegion = null;
     // Remove this chart from every peer's sync set to avoid dangling refs.
@@ -966,6 +1267,18 @@ export abstract class ChartBase {
     if (this.hasRightAxis) {
       renderAxes(ctx, this.gridDomainRight, plot, this.opts, 'right');
     }
+
+    // v1.7.0 fix: clip everything inside the plot rectangle before drawing
+    // series or legend. When a viewport zooms in, samples whose xArr[p] falls
+    // outside the viewport window get projected to pixel coordinates far
+    // outside the plot rect — without this clip the Canvas 2D API happily
+    // paints them over the axis labels and canvas corners. Grid + axes are
+    // drawn OUTSIDE the clip so tick labels (which sit in the padding area)
+    // remain visible.
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(plot.x, plot.y, plot.w, plot.h);
+    ctx.clip();
 
     // Detect stack groups.
     const { groups: stackGroups, stacked: stackedIndices } = this.detectAllStackGroups();
@@ -1011,27 +1324,72 @@ export abstract class ChartBase {
     }
 
     renderLegend(ctx, this.legendConfigs(), plot, this.opts);
+
+    ctx.restore();
   }
 
   /**
-   * Create a proxy {@link SeriesView} that overlays a domain and optional
-   * overrides on top of `store`. The proxy preserves the store's prototype chain
-   * so methods (`physOf`, `bracketLogical`) resolve correctly, while `xMin`,
-   * `xMax`, `yMin`, `yMax`, and any override keys shadow the originals.
+   * v1.7.0: pooled proxy views for `renderOne` and `buildCrosshairViews`.
    *
-   * This is called from `renderOne` (per-series domain + optional stacked
-   * `yArr`) and from `buildCrosshairViews` (per-series domain + cumulative
-   * `yArr` for stacked series). Keeping it in one place avoids duplication
-   * and gives the v1.7.0 viewport a single construction point.
+   * The old `makeView` used `Object.assign(Object.create(prototype), …)`,
+   * allocating N objects per frame (one per series, plus another N when the
+   * crosshair was on). Under a wheel-zoom or drag-pan gesture that's 60 ×
+   * 2N allocations per second — enough GC pressure to visibly stall on
+   * mid-tier hardware.
+   *
+   * Instead each `ChartBase` owns two pools of {@link PooledView} instances:
+   *   - `viewSlotRender`: a single reusable slot used sequentially by
+   *     `renderOne` (each call publishes → renders → the next call
+   *     overwrites; the slot never escapes the render loop).
+   *   - `viewPoolCrosshair`: N slots (grows on demand), one per series,
+   *     because `buildCrosshairViews` returns an array whose entries
+   *     coexist during `computeHits` + `renderCrosshair`.
+   *
+   * `PooledView` implements the `SeriesView` contract by delegating
+   * `physOf` / `bracketLogical` to the bound store, so ring wraparound
+   * still works. All other fields are plain data.
    */
-  private makeView(store: SeriesView, domain: Domain, overrides?: Partial<SeriesView>): SeriesView {
-    return Object.assign(Object.create(Object.getPrototypeOf(store)), store, {
-      xMin: domain.xMin,
-      xMax: domain.xMax,
-      yMin: domain.yMin,
-      yMax: domain.yMax,
-      ...overrides,
-    });
+  private readonly viewSlotRender = new PooledView();
+  private viewPoolCrosshair: PooledView[] = [];
+
+  /**
+   * Populate the single render slot from `store` + explicit bounds and return
+   * it. Caller must consume the view before calling {@link viewForRender}
+   * again. `yArrOverride` swaps the Y array (used for stacked bands' Y).
+   *
+   * Scalars, not a `Domain` object, so this can be called from the hot draw
+   * loop without allocating a fresh literal per series per frame.
+   */
+  private viewForRender(
+    store: SeriesView,
+    xMin: number,
+    xMax: number,
+    yMin: number,
+    yMax: number,
+    yArrOverride?: Float64Array<ArrayBufferLike>,
+  ): SeriesView {
+    return this.viewSlotRender.bind(store, xMin, xMax, yMin, yMax, yArrOverride);
+  }
+
+  /**
+   * Return crosshair pool slot `i`, populating it from `store` + explicit
+   * bounds. The pool grows on demand and is reused across frames.
+   */
+  private viewForCrosshair(
+    i: number,
+    store: SeriesView,
+    xMin: number,
+    xMax: number,
+    yMin: number,
+    yMax: number,
+    yArrOverride?: Float64Array<ArrayBufferLike>,
+  ): SeriesView {
+    let slot = this.viewPoolCrosshair[i];
+    if (!slot) {
+      slot = new PooledView();
+      this.viewPoolCrosshair[i] = slot;
+    }
+    return slot.bind(store, xMin, xMax, yMin, yMax, yArrOverride);
   }
 
   /** Render a single series. */
@@ -1060,10 +1418,7 @@ export abstract class ChartBase {
     if (cfg.yMin != null) viewYMin = cfg.yMin;
     if (cfg.yMax != null) viewYMax = cfg.yMax;
 
-    const proxyView = this.makeView(store, { xMin: dom.xMin, xMax: dom.xMax, yMin: viewYMin, yMax: viewYMax }, {
-      yArr,
-    } as Partial<SeriesView>);
-
+    const proxyView = this.viewForRender(store, dom.xMin, dom.xMax, viewYMin, viewYMax, yArr);
     this.renderSeries(ctx, proxyView, plot, sOpts);
 
     if (cfg.dash) ctx.setLineDash([]);
@@ -1266,6 +1621,52 @@ export abstract class ChartBase {
       }
     };
 
+    // v1.7.0: the user viewport is the highest-priority source of truth for
+    // X. It must win at the entry — never as another `if` nested inside the
+    // streaming/fixedY/gridPinned logic below — so it can't drift out of
+    // sync with those regimes.
+    if (this.viewport) {
+      // Start from the full-data extent so any axis without windowed data
+      // (empty on this axis, or with stacked-only series) still has a sane
+      // Y domain. initDomain also writes X from the data extent; overwrite
+      // it with the viewport's X afterwards.
+      this.initDomain(this.gridDomainLeft, 'left', streaming ? 0.05 : 0);
+      if (this.hasRightAxis) this.initDomain(this.gridDomainRight, 'right', streaming ? 0.05 : 0);
+
+      // v1.7.0: unless the viewport opts out (`yAuto: false`), rescale Y to
+      // the samples visible inside `[xMin, xMax]`. Without this, zooming
+      // into a small feature keeps Y anchored to the global peak and the
+      // feature looks flat — the visible reason users describe zoom as
+      // "not doing anything".
+      if (this.viewport.yAuto !== false) {
+        const vx = this.viewport;
+        const yl = this.computeWindowedYExtent('left', vx.xMin, vx.xMax);
+        if (yl) {
+          const margin = streaming ? 0.05 : 0;
+          const pad = margin > 0 && yl.yMax > yl.yMin ? (yl.yMax - yl.yMin) * margin : 0;
+          this.gridDomainLeft.yMin = yl.yMin - pad;
+          this.gridDomainLeft.yMax = yl.yMax + pad;
+        }
+        if (this.hasRightAxis) {
+          const yr = this.computeWindowedYExtent('right', vx.xMin, vx.xMax);
+          if (yr) {
+            const margin = streaming ? 0.05 : 0;
+            const pad = margin > 0 && yr.yMax > yr.yMin ? (yr.yMax - yr.yMin) * margin : 0;
+            this.gridDomainRight.yMin = yr.yMin - pad;
+            this.gridDomainRight.yMax = yr.yMax + pad;
+          }
+        }
+      }
+
+      this.gridDomainLeft.xMin = this.viewport.xMin;
+      this.gridDomainLeft.xMax = this.viewport.xMax;
+      this.gridDomainRight.xMin = this.viewport.xMin;
+      this.gridDomainRight.xMax = this.viewport.xMax;
+      applyUserBounds();
+      this.gridPinned = true;
+      return;
+    }
+
     // Streaming: recompute the window extent every tick so the grid tracks the
     // sliding window (shrinks as well as grows). Fixed bounds still win. A
     // small margin keeps peaks/troughs off the frame edge.
@@ -1299,6 +1700,120 @@ export abstract class ChartBase {
    * @param margin optional fraction of the Y range to pad on each side
    *   (used in streaming mode so peaks/troughs don't touch the frame).
    */
+  /**
+   * v1.7.0: compute Y extent restricted to `[xMin, xMax]` for the given
+   * axis. Used by {@link updateGridDomain} when the viewport is active and
+   * `Viewport.yAuto !== false`, so zooming into a small feature makes it
+   * fill the plot vertically instead of staying flat against the global
+   * peak.
+   *
+   * Covers both non-stacked series (per-sample Y) and stacked groups
+   * (per-index cumulative Y summed across layers, matching
+   * {@link renderStackedBands}). Positive and negative accumulators are
+   * tracked separately to mirror `accumulateStackGroup` — a group with
+   * mixed-sign layers reports the full min→max of the stacked envelope.
+   *
+   * Returns `null` when the window contains no finite samples (e.g. all-NaN
+   * or empty). Caller falls back to the full-data extent in that case.
+   */
+  private computeWindowedYExtent(
+    axis: 'left' | 'right',
+    xMin: number,
+    xMax: number,
+  ): { yMin: number; yMax: number } | null {
+    let yMin = Infinity;
+    let yMax = -Infinity;
+    let found = false;
+    const { groups, stacked } = this.detectStackGroupsOnAxis(axis);
+
+    // Non-stacked series: raw Y per sample.
+    for (let i = 0; i < this.stores.length; i++) {
+      if (stacked.has(i)) continue;
+      if (!this.isVisible(i)) continue;
+      if ((this.seriesConfigs[i].yAxis ?? 'left') !== axis) continue;
+      const s = this.stores[i];
+      if (s.count === 0) continue;
+      const iStart = s.bracketLogical(xMin);
+      const iEnd = s.bracketLogical(xMax);
+      // Scan the closed range [iStart, iEnd] over logical order, honouring
+      // ring wraparound via physOf. NaN samples (v1.6.0 gaps) are skipped.
+      for (let j = iStart; j <= iEnd; j++) {
+        const p = s.physOf(j);
+        const y = s.yArr[p];
+        if (!Number.isFinite(y)) continue;
+        if (y < yMin) yMin = y;
+        if (y > yMax) yMax = y;
+        found = true;
+      }
+    }
+
+    // Stacked groups: cumulative Y per index over the window. Only counts
+    // the group when all members have matching counts (same alignment rule
+    // as accumulateStackGroup — misaligned groups fall back to per-layer
+    // above via the `stacked` set membership being applied per index).
+    for (const [, grp] of groups) {
+      if (grp.length < 2) continue;
+      // All group members must be visible AND aligned to be counted here.
+      let refCount = -1;
+      let anyInvisible = false;
+      for (const idx of grp) {
+        if (!this.isVisible(idx)) {
+          anyInvisible = true;
+          break;
+        }
+        const s = this.stores[idx];
+        if (refCount < 0) refCount = s.count;
+        else if (s.count !== refCount) {
+          anyInvisible = true;
+          break;
+        }
+      }
+      if (anyInvisible || refCount <= 0) continue;
+
+      const first = this.stores[grp[0]];
+      const iStart = first.bracketLogical(xMin);
+      const iEnd = first.bracketLogical(xMax);
+      if (iStart > iEnd) continue;
+
+      // Per-index positive/negative accumulators over the window. NaN is
+      // treated as 0 for accumulation (documented gap contract §6.4).
+      const nVis = iEnd - iStart + 1;
+      const pos = new Float64Array(nVis);
+      const neg = new Float64Array(nVis);
+      for (const idx of grp) {
+        const s = this.stores[idx];
+        let p = s.physOf(iStart);
+        let toWrap = s.cap - p;
+        for (let j = 0; j < nVis; j++) {
+          const v = s.yArr[p];
+          if (Number.isFinite(v)) {
+            if (v >= 0) pos[j] += v;
+            else neg[j] += v;
+          }
+          if (--toWrap === 0) {
+            p = 0;
+            toWrap = s.cap;
+          } else p++;
+        }
+      }
+      for (let j = 0; j < nVis; j++) {
+        const hi = pos[j];
+        const lo = neg[j];
+        if (hi > yMax) yMax = hi;
+        if (lo < yMin) yMin = lo;
+        // A pure-positive stack still needs 0 in the domain so the base
+        // baseline is visible; same for pure-negative.
+        found = true;
+      }
+      if (found) {
+        if (yMin > 0) yMin = 0;
+        if (yMax < 0) yMax = 0;
+      }
+    }
+
+    return found ? { yMin, yMax } : null;
+  }
+
   private initDomain(d: Domain, axis: 'left' | 'right', margin = 0): void {
     d.xMin = Infinity;
     d.xMax = -Infinity;
@@ -1572,6 +2087,12 @@ export abstract class ChartBase {
       }
     }
 
+    // Fill the pool in place so the array stays stable across frames (only
+    // grows on demand inside viewForCrosshair). Truncate to current series
+    // count so removeSeries/setOptions doesn't leak stale slots to callers.
+    if (this.viewPoolCrosshair.length > this.stores.length) {
+      this.viewPoolCrosshair.length = this.stores.length;
+    }
     return this.stores.map((store, i) => {
       const cfg = this.seriesConfigs[i];
       const dom = (cfg.yAxis ?? 'left') === 'right' ? this.gridDomainRight : this.gridDomainLeft;
@@ -1580,11 +2101,7 @@ export abstract class ChartBase {
       if (cfg.yMin != null) viewYMin = cfg.yMin;
       if (cfg.yMax != null) viewYMax = cfg.yMax;
       const accY = stackedSurrogates.get(i);
-      return this.makeView(
-        store,
-        { xMin: dom.xMin, xMax: dom.xMax, yMin: viewYMin, yMax: viewYMax },
-        accY ? ({ yArr: accY } as Partial<SeriesView>) : undefined,
-      );
+      return this.viewForCrosshair(i, store, dom.xMin, dom.xMax, viewYMin, viewYMax, accY);
     });
   }
 
@@ -1625,9 +2142,23 @@ export abstract class ChartBase {
   private attachEvents(): void {
     this.resizeObserver = new ResizeObserver(this.handleResize);
     this.resizeObserver.observe(this.surface.canvas);
-    this.surface.canvas.addEventListener('mousemove', this.handleMouseMove);
-    this.surface.canvas.addEventListener('mouseleave', this.handleMouseLeave);
-    this.surface.canvas.addEventListener('keydown', this.handleKeyDown);
+    const canvas = this.surface.canvas;
+    // Disable the browser's native scroll/zoom gestures on the canvas so our
+    // own wheel-zoom and pointer-drag pan get first crack at the gesture,
+    // without blocking page scroll anywhere else on the page.
+    canvas.style.touchAction = 'none';
+    canvas.addEventListener('pointermove', this.handlePointerMove);
+    canvas.addEventListener('pointerdown', this.handlePointerDown);
+    canvas.addEventListener('pointerup', this.handlePointerUp);
+    canvas.addEventListener('pointercancel', this.handlePointerUp);
+    canvas.addEventListener('pointerleave', this.handlePointerLeave);
+    canvas.addEventListener('wheel', this.handleWheel, { passive: false });
+    canvas.addEventListener('keydown', this.handleKeyDown);
+    // Passive listeners: we only need the *event*, we never preventDefault
+    // on scroll/resize. `capture: true` catches scroll on any ancestor
+    // (fixed containers, virtualised lists) not just the window.
+    window.addEventListener('scroll', this.handleWindowLayoutShift, { passive: true, capture: true });
+    window.addEventListener('resize', this.handleWindowLayoutShift, { passive: true });
   }
 
   private onResize(): void {
@@ -1637,18 +2168,219 @@ export abstract class ChartBase {
     }
   }
 
-  private onMouseMove(e: MouseEvent): void {
-    const rect = this.surface.canvas.getBoundingClientRect();
-    this.cursorX = e.clientX - rect.left;
-    this.cursorY = e.clientY - rect.top;
+  private onPointerMove(e: PointerEvent): void {
+    const rect = this.surface.clientRect();
+    const pxX = e.clientX - rect.left;
+    const pxY = e.clientY - rect.top;
+
+    // v1.7.0: track this pointer's latest position for pinch detection.
+    // Only pointers already recorded in activePointers count — a bare
+    // mouse-hover pointermove (no prior pointerdown inside the plot) skips
+    // this so it doesn't interfere with the crosshair.
+    if (this.activePointers.has(e.pointerId)) {
+      this.activePointers.set(e.pointerId, { pxX, pxY });
+    }
+
+    // Two active pointers → pinch gesture. Distance drives zoom (anchored
+    // at the centroid), centroid movement drives pan on top. Runs before
+    // the single-pointer drag branch so we never mix pan-drag with pinch.
+    if (this.activePointers.size === 2) {
+      this.updatePinchState();
+      // Suppress crosshair during pinch — the two fingers occlude it and
+      // synced charts shouldn't chase two anchors.
+      this.showCrosshair = false;
+      this.scheduleInteractionFrame();
+      return;
+    }
+
+    // Apply state changes synchronously so programmatic reads like
+    // getViewport() reflect the latest gesture on the next line, but
+    // coalesce the *repaint* into a rAF so bursts of pointermove (up to
+    // 240Hz on modern touchpads) collapse to one draw per frame instead
+    // of one draw per event.
+    if (this.dragging) {
+      const dx = pxX - this.dragLastPx;
+      this.dragLastPx = pxX;
+      if (dx !== 0) this.applyPan(dx);
+    }
+    this.cursorX = pxX;
+    this.cursorY = pxY;
     this.showCrosshair = true;
-    this.draw();
     this.notifySyncCrosshair();
+    this.scheduleInteractionFrame();
   }
 
-  private onMouseLeave(): void {
+  /** Begin a pan drag when the pointer goes down inside the plot area. */
+  private onPointerDown(e: PointerEvent): void {
+    if (e.pointerType === 'mouse' && e.button !== 0) return; // primary button only
+    const rect = this.surface.clientRect();
+    const pxX = e.clientX - rect.left;
+    const pxY = e.clientY - rect.top;
+    const plot = this.plotRect();
+    if (pxX < plot.x || pxX > plot.x + plot.w || pxY < plot.y || pxY > plot.y + plot.h) return;
+
+    // v1.7.0: record every pointer that touches down inside the plot so
+    // pointermove can detect a two-finger pinch. Cleared on up/cancel.
+    this.activePointers.set(e.pointerId, { pxX, pxY });
+
+    // First pointer: begin single-pointer pan drag as before. If a second
+    // finger lands, onPointerMove will switch modes to pinch on the fly
+    // (and pinching = true will suppress the pan branch there).
+    if (this.activePointers.size === 1) {
+      this.dragging = true;
+      this.dragLastPx = pxX;
+    } else if (this.activePointers.size === 2) {
+      // Second finger — cancel any in-flight pan and initialise the pinch
+      // baseline. Distance = 0 sentinel is replaced on the next move.
+      this.dragging = false;
+      this.pinching = true;
+      this.pinchLastDist = 0;
+      this.pinchLastCentroidX = 0;
+    }
+    try {
+      this.surface.canvas.setPointerCapture(e.pointerId);
+    } catch {
+      // Pointer capture unavailable in some environments — pan still tracks
+      // via pointermove as long as the pointer stays over the canvas.
+    }
+  }
+
+  private onPointerUp(e: PointerEvent): void {
+    // v1.7.0: drop the pointer from the active set even if we weren't
+    // dragging (e.g. tap that never moved). If a pinch had two pointers
+    // and one lifts, exit pinch mode; the remaining pointer becomes the
+    // new pan anchor so a smooth pinch→pan handoff feels natural.
+    const wasTracked = this.activePointers.delete(e.pointerId);
+    if (this.pinching && this.activePointers.size < 2) {
+      this.pinching = false;
+      if (this.activePointers.size === 1) {
+        this.dragging = true;
+        const remaining = this.activePointers.values().next().value;
+        if (remaining) this.dragLastPx = remaining.pxX;
+      }
+    }
+    if (this.activePointers.size === 0) this.dragging = false;
+    // Only release pointer capture for pointers we actually captured.
+    // A stray pointerup (e.g. mouse hover release we never captured)
+    // shouldn't touch the capture state at all.
+    if (wasTracked) {
+      try {
+        this.surface.canvas.releasePointerCapture(e.pointerId);
+      } catch {
+        // no-op — capture may already be released (e.g. pointercancel)
+      }
+    }
+  }
+
+  private onPointerLeave(): void {
+    // Pointer capture keeps delivering pointermove/up outside the canvas
+    // bounds during an active drag or pinch — don't hide the crosshair
+    // mid-gesture.
+    if (this.dragging || this.pinching) return;
     this.showCrosshair = false;
     this.draw();
     this.notifySyncCrosshairLeave();
+  }
+
+  /**
+   * v1.7.0 pinch handling. Called by `onPointerMove` while exactly two
+   * pointers are down. Computes the current pointer-pair distance and
+   * centroid, and — starting from the second pointermove of the gesture
+   * (the first is used to seed the baseline) — applies zoom + optional
+   * pan proportional to how much each changed since the last frame.
+   *
+   * Zoom factor is `prevDist / currDist` so spreading fingers apart
+   * (currDist > prevDist) shrinks the visible range (factor < 1 = zoom
+   * in), anchored at the centroid so the exact data point between the two
+   * fingers stays under the centroid.
+   */
+  private updatePinchState(): void {
+    // Extract the two active pointers. Order-independent so which finger
+    // moves doesn't change semantics.
+    const it = this.activePointers.values();
+    const a = it.next().value!;
+    const b = it.next().value!;
+    const dist = Math.hypot(a.pxX - b.pxX, a.pxY - b.pxY);
+    const centroidX = (a.pxX + b.pxX) / 2;
+
+    // First move in the gesture: just seed the baseline, nothing to apply
+    // yet. Also guard against a zero-distance snapshot (fingers exactly
+    // overlapping — no meaningful axis).
+    if (this.pinchLastDist === 0 || dist === 0) {
+      this.pinchLastDist = dist;
+      this.pinchLastCentroidX = centroidX;
+      return;
+    }
+
+    // Zoom: the ratio of distances. Applied around the centroid so the
+    // data between the fingers stays pinned. Clamp per frame so a wildly
+    // shaky pinch can't slam the viewport in a single event.
+    let factor = this.pinchLastDist / dist;
+    if (factor > 2) factor = 2;
+    else if (factor < 0.5) factor = 0.5;
+    if (factor !== 1) this.applyZoom(centroidX, factor);
+
+    // Pan: how far the centroid slid. Same sign convention as drag pan
+    // (positive dx = looked further left, i.e. viewport shifted left).
+    const dx = centroidX - this.pinchLastCentroidX;
+    if (dx !== 0) this.applyPan(dx);
+
+    this.pinchLastDist = dist;
+    this.pinchLastCentroidX = centroidX;
+  }
+
+  private onWheel(e: WheelEvent): void {
+    e.preventDefault();
+    const rect = this.surface.clientRect();
+    const pxX = e.clientX - rect.left;
+
+    // v1.7.0: normalise deltaY across input devices before deciding a zoom
+    // factor. Raw deltaY is uncomparable between:
+    //   - a real mouse wheel click (deltaY ≈ ±100, deltaMode=0/1, coarse)
+    //   - a precision touchpad (deltaY ≈ ±3 per event, deltaMode=0, up to
+    //     100 events per second → without normalisation, one swipe zooms
+    //     500 % because 100 × factor 1.1 ^ 100 explodes)
+    //   - a Firefox line-mode wheel (deltaY ≈ ±3, deltaMode=1=lines)
+    // Convert everything to a common "pixels of scroll" scale by treating
+    // one line as 16 CSS pixels and one page as 400. Then compose the zoom
+    // factor exponentially so 100 px of scroll ≈ a 22 % step (comfortable
+    // for both a coarse click and a smooth swipe).
+    let delta = e.deltaY;
+    if (e.deltaMode === 1)
+      delta *= 16; // WheelEvent.DOM_DELTA_LINE
+    else if (e.deltaMode === 2) delta *= 400; // WheelEvent.DOM_DELTA_PAGE
+
+    // Clamp so a single wild event (some drivers emit deltaY = 1000+) can't
+    // slam the viewport by a huge factor — the burst-coalescing rAF will
+    // still compose subsequent events across the frame.
+    if (delta > 500) delta = 500;
+    else if (delta < -500) delta = -500;
+
+    // exp(delta / 500) → deltaY = +100 → factor ≈ 1.22 (zoom out ~22 %);
+    // deltaY = -100 → factor ≈ 0.82 (zoom in ~22 %). Preserves the sign
+    // convention (positive deltaY = zoom out) used by the pre-v1.7 code
+    // and the existing test suite.
+    const factor = Math.exp(delta / 500);
+    // v1.7.0: apply the zoom synchronously so getViewport() reflects the
+    // wheel tick immediately, but let the repaint happen inside a rAF so a
+    // burst of wheel events (touchpads emit 60-120 per second) folds into
+    // one draw per frame.
+    this.applyZoom(pxX, factor);
+    this.scheduleInteractionFrame();
+  }
+
+  /**
+   * Schedule a single rAF that redraws after interaction state changed.
+   * Idempotent: repeated calls within the same frame reuse the pending rAF.
+   * State mutations (viewport, cursor, dragging) run synchronously in the
+   * handlers; this only coalesces the *repaint*.
+   */
+  private scheduleInteractionFrame(): void {
+    if (this.destroyed || this.interactionRafId) return;
+    this.interactionRafId = requestAnimationFrame(() => {
+      this.interactionRafId = 0;
+      if (this.destroyed) return;
+      this.draw();
+    });
   }
 }

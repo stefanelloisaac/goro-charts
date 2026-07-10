@@ -23,11 +23,19 @@
  */
 
 import type { SeriesView, PlotRect, ResolvedOpts } from '../types.ts';
+import { resolveRenderWindow } from '../math/window.ts';
 
 /** Render the series line into `ctx` for the given view and plot rect. */
 export function renderLine(ctx: CanvasRenderingContext2D, view: SeriesView, plot: PlotRect, opts: ResolvedOpts): void {
   const { xArr, yArr, count: n, cap } = view;
   if (n === 0) return;
+
+  // v1.7.0 windowing: iterate only the logical range that can affect a pixel
+  // column, not the whole series. Under an active viewport this collapses a
+  // 500k-point series to ≈ 2·plot.w work per frame.
+  const win = resolveRenderWindow(view, view.xMin, view.xMax);
+  if (win.iEnd < win.iStart) return;
+  const nVisible = win.iEnd - win.iStart + 1;
 
   ctx.strokeStyle = opts.lineColor;
   ctx.lineWidth = opts.lineWidth;
@@ -45,10 +53,10 @@ export function renderLine(ctx: CanvasRenderingContext2D, view: SeriesView, plot
   // fixture) omits gapMode — ResolvedOpts always sets it in production.
   const gapMode = opts.gapMode ?? 'break';
 
-  let p = view.head;
-  let toWrap = cap - view.head;
+  let p = win.pStart;
+  let toWrap = win.toWrapStart;
 
-  if (n > plot.w * 2) {
+  if (nVisible > plot.w * 2) {
     let col = -1;
     let colMinY = 0;
     let colMaxY = 0;
@@ -79,7 +87,7 @@ export function renderLine(ctx: CanvasRenderingContext2D, view: SeriesView, plot
       // else: the moveTo for this column's first point already ran inline.
     };
 
-    for (let i = 0; i < n; i++) {
+    for (let i = win.iStart; i <= win.iEnd; i++) {
       const px = xOff + xArr[p] * xScale;
       const c = px | 0;
       const rawY = yArr[p];
@@ -118,7 +126,7 @@ export function renderLine(ctx: CanvasRenderingContext2D, view: SeriesView, plot
     // Whether a sub-path is currently open — 'break' lifts the pen at a gap
     // so the next valid point re-opens with moveTo instead of lineTo.
     let segOpen = false;
-    for (let i = 0; i < n; i++) {
+    for (let i = win.iStart; i <= win.iEnd; i++) {
       const rawY = yArr[p];
       const isGap = Number.isNaN(rawY);
 

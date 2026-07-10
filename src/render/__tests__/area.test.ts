@@ -16,7 +16,23 @@ function makeView(xs: number[], ys: number[], yMin = 0, yMax = 100) {
     yMin,
     yMax,
     physOf: (i: number) => i,
-    bracketLogical: () => 0,
+    // Real bracketLogical: largest logical index with x ≤ target, clamped
+    // to [0, n-1]. Matches SeriesStore so the render-window helper produces
+    // the same iteration bounds it would in prod.
+    bracketLogical: (t: number) => {
+      const n = xs.length;
+      if (n === 0) return 0;
+      if (t <= xs[0]) return 0;
+      if (t >= xs[n - 1]) return n - 1;
+      let lo = 0;
+      let hi = n - 1;
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >>> 1;
+        if (xs[mid] <= t) lo = mid;
+        else hi = mid - 1;
+      }
+      return lo;
+    },
   };
 }
 

@@ -303,10 +303,35 @@ export interface FrameAppendedEvent {
 /** Payload emitted when the chart is destroyed. Reserved for future fields. */
 export type ChartDestroyedEvent = Record<string, never>;
 
+/**
+ * User-controlled X-axis viewport (v1.7.0). When set, it overrides the
+ * chart's auto/streaming/`fixedY`-style X domain logic entirely — see
+ * {@link ChartOpts} and `ChartBase.setViewport`.
+ *
+ * By default (`yAuto: true`) the Y axis auto-scales to the samples *inside*
+ * the visible X window — zooming into a small feature makes it fill the
+ * plot vertically instead of staying flat against the global peak. Set
+ * `yAuto: false` to keep Y anchored to the full-data extent (v1.7.0
+ * behaviour). `ChartOpts.yMin`/`yMax` still win over both modes.
+ */
+export interface Viewport {
+  xMin: number;
+  xMax: number;
+  /**
+   * Whether to auto-scale Y to the samples inside `[xMin, xMax]`.
+   * Default: `true`. `false` keeps Y bound to the full-data extent.
+   */
+  yAuto?: boolean;
+}
+
+/** Payload emitted whenever the viewport changes (`setViewport`, zoom, pan, `resetViewport`). */
+export type ViewportChangeEvent = Viewport;
+
 /** Event map for typed listeners. */
 export interface ChartEventMap {
   frameappended: FrameAppendedEvent;
   destroy: ChartDestroyedEvent;
+  viewportchange: ViewportChangeEvent;
 }
 
 export type ChartEventType = keyof ChartEventMap;

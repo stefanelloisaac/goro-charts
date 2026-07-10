@@ -13,6 +13,7 @@
  */
 
 import type { SeriesView, PlotRect, ResolvedOpts } from '../types.ts';
+import { resolveRenderWindow } from '../math/window.ts';
 
 /** Advance a physical index by `k` positions, modulo `cap`. */
 function advance(p: number, k: number, cap: number): number {
@@ -29,6 +30,13 @@ export function renderScatter(
   const { xArr, yArr, count: n, cap } = view;
   if (n === 0) return;
 
+  // v1.7.0 windowing: only sample points inside the viewport. Stride thinning
+  // is then computed against the visible count so `maxDots` still bounds the
+  // *drawn* dot count without wasting stride slots on off-screen samples.
+  const win = resolveRenderWindow(view, view.xMin, view.xMax);
+  if (win.iEnd < win.iStart) return;
+  const nVisible = win.iEnd - win.iStart + 1;
+
   const xRange = view.xMax - view.xMin;
   const yRange = view.yMax - view.yMin;
   const xScale = xRange > 0 ? plot.w / xRange : 0;
@@ -40,15 +48,15 @@ export function renderScatter(
   const gapMode = opts.gapMode ?? 'break';
 
   const maxDots = opts.maxDots;
-  const step = n > maxDots ? Math.max(1, Math.floor(n / maxDots)) : 1;
+  const step = nVisible > maxDots ? Math.max(1, Math.floor(nVisible / maxDots)) : 1;
   const r = opts.pointRadius;
 
-  let p = view.head;
+  let p = win.pStart;
 
   ctx.fillStyle = opts.lineColor;
   ctx.beginPath();
 
-  for (let i = 0; i < n; i += step) {
+  for (let i = win.iStart; i <= win.iEnd; i += step) {
     const rawY = yArr[p];
     const isGap = Number.isNaN(rawY);
     if (!isGap || gapMode === 'zero') {

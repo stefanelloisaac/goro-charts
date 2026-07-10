@@ -1745,3 +1745,346 @@ describe('v1.6.0 — eixo temporal, formatadores e gapMode', () => {
     expect(chart.pointCount(0)).toBe(5);
   });
 });
+
+describe('v1.7.0 — viewport, zoom, pan e Pointer Events', () => {
+  let canvas: HTMLCanvasElement;
+
+  beforeEach(() => {
+    canvas = createCanvas();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    canvas.remove();
+    vi.useRealTimers();
+  });
+
+  function seedChart(opts?: Record<string, unknown>): LineChart {
+    const chart = new LineChart(canvas, { autoDraw: false, ...opts } as any);
+    const x = new Float64Array([
+      0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100,
+    ]) as unknown as Float64Array<ArrayBufferLike>;
+    const y = new Float64Array([0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50]) as unknown as Float64Array<ArrayBufferLike>;
+    chart.setData(0, x, y);
+    chart.draw();
+    return chart;
+  }
+
+  function pointer(
+    type: string,
+    opts: { clientX: number; clientY: number; pointerId?: number; pointerType?: string; button?: number },
+  ): PointerEvent {
+    return new PointerEvent(type, {
+      clientX: opts.clientX,
+      clientY: opts.clientY,
+      pointerId: opts.pointerId ?? 1,
+      pointerType: opts.pointerType ?? 'mouse',
+      button: opts.button ?? 0,
+      bubbles: true,
+      cancelable: true,
+    });
+  }
+
+  // happy-dom's WheelEvent constructor doesn't forward clientX/clientY (real
+  // browsers do — WheelEvent extends MouseEvent). Define them explicitly so
+  // the test environment matches production behaviour.
+  function wheel(opts: { clientX: number; clientY: number; deltaY: number }): WheelEvent {
+    const evt = new WheelEvent('wheel', { deltaY: opts.deltaY, bubbles: true, cancelable: true });
+    Object.defineProperty(evt, 'clientX', { value: opts.clientX, configurable: true });
+    Object.defineProperty(evt, 'clientY', { value: opts.clientY, configurable: true });
+    return evt;
+  }
+
+  it('getViewport retorna null antes de qualquer setViewport', () => {
+    const chart = seedChart();
+    expect(chart.getViewport()).toBeNull();
+  });
+
+  it('setViewport define o domínio X e getViewport reflete o valor', () => {
+    const chart = seedChart();
+    chart.setViewport({ xMin: 10, xMax: 50 });
+    expect(chart.getViewport()).toEqual({ xMin: 10, xMax: 50 });
+    chart.draw();
+    expect(chart['gridDomainLeft'].xMin).toBe(10);
+    expect(chart['gridDomainLeft'].xMax).toBe(50);
+  });
+
+  it('setViewport com xMin >= xMax lança erro', () => {
+    const chart = seedChart();
+    expect(() => chart.setViewport({ xMin: 50, xMax: 10 })).toThrow();
+    expect(() => chart.setViewport({ xMin: 10, xMax: 10 })).toThrow();
+  });
+
+  it('setViewport com valores não finitos lança erro', () => {
+    const chart = seedChart();
+    expect(() => chart.setViewport({ xMin: NaN, xMax: 50 })).toThrow();
+    expect(() => chart.setViewport({ xMin: 0, xMax: Infinity })).toThrow();
+  });
+
+  it('setViewport é clampado à extensão de dados visível', () => {
+    const chart = seedChart();
+    chart.setViewport({ xMin: -50, xMax: 150 });
+    // A janela pedida cobre toda a extensão (0..100) → equivale a reset (null).
+    expect(chart.getViewport()).toBeNull();
+  });
+
+  it('setViewport clampa parcialmente quando a janela ultrapassa só um lado', () => {
+    const chart = seedChart();
+    chart.setViewport({ xMin: -20, xMax: 30 });
+    const vp = chart.getViewport();
+    expect(vp).not.toBeNull();
+    expect(vp!.xMin).toBe(0);
+    expect(vp!.xMax).toBeLessThanOrEqual(50);
+  });
+
+  it('resetViewport restaura o domínio completo', () => {
+    const chart = seedChart();
+    chart.setViewport({ xMin: 10, xMax: 50 });
+    chart.resetViewport();
+    expect(chart.getViewport()).toBeNull();
+    chart.draw();
+    expect(chart['gridDomainLeft'].xMin).toBe(0);
+    expect(chart['gridDomainLeft'].xMax).toBe(100);
+  });
+
+  it('resetViewport sem viewport ativo é no-op (não emite evento)', () => {
+    const chart = seedChart();
+    const calls: unknown[] = [];
+    chart.on('viewportchange', (ev) => calls.push(ev));
+    chart.resetViewport();
+    expect(calls).toHaveLength(0);
+  });
+
+  it('setViewport emite "viewportchange" com o payload aplicado', () => {
+    const chart = seedChart();
+    const calls: { xMin: number; xMax: number }[] = [];
+    chart.on('viewportchange', (ev) => calls.push(ev));
+    chart.setViewport({ xMin: 10, xMax: 50 });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual({ xMin: 10, xMax: 50 });
+  });
+
+  it('resetViewport emite "viewportchange" com o domínio completo', () => {
+    const chart = seedChart();
+    chart.setViewport({ xMin: 10, xMax: 50 });
+    const calls: { xMin: number; xMax: number }[] = [];
+    chart.on('viewportchange', (ev) => calls.push(ev));
+    chart.resetViewport();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual({ xMin: 0, xMax: 100 });
+  });
+
+  it('decimação/render usam apenas o viewport visível (grid segue o viewport, não a extensão total)', () => {
+    const chart = seedChart();
+    chart.setViewport({ xMin: 20, xMax: 40 });
+    chart.draw();
+    expect(chart['gridDomainLeft'].xMin).toBe(20);
+    expect(chart['gridDomainLeft'].xMax).toBe(40);
+  });
+
+  it('zoom por roda (wheel) mantém o ponto sob o cursor e reduz a janela', () => {
+    const chart = seedChart();
+    const plot = chart['plotRect']();
+    const pxX = plot.x + plot.w / 2; // centro do plot
+    // Domínio antes do zoom é a extensão completa (0..100) — o dado sob o
+    // cursor (centro do plot) corresponde ao valor de x no meio do domínio.
+    const anchorBefore = 0 + ((pxX - plot.x) / plot.w) * (100 - 0);
+
+    canvas.dispatchEvent(wheel({ deltaY: -100, clientX: pxX, clientY: plot.y + 1 }));
+
+    const vp = chart.getViewport();
+    expect(vp).not.toBeNull();
+    expect(vp!.xMax - vp!.xMin).toBeLessThan(100); // janela encolheu (zoom in)
+
+    // O ponto de dados sob o cursor permanece aproximadamente no mesmo pixel.
+    const plotAfter = chart['plotRect']();
+    const pxAfter = plotAfter.x + ((anchorBefore - vp!.xMin) / (vp!.xMax - vp!.xMin)) * plotAfter.w;
+    expect(pxAfter).toBeCloseTo(pxX, 0);
+  });
+
+  it('zoom-out além da extensão total limpa o viewport (equivale a reset)', () => {
+    const chart = seedChart();
+    chart.setViewport({ xMin: 40, xMax: 60 });
+    const plot = chart['plotRect']();
+    const pxX = plot.x + plot.w / 2;
+    // deltaY positivo = zoom out; fator grande o suficiente para estourar a extensão total.
+    for (let i = 0; i < 30; i++) {
+      canvas.dispatchEvent(wheel({ deltaY: 100, clientX: pxX, clientY: plot.y + 1 }));
+    }
+    expect(chart.getViewport()).toBeNull();
+  });
+
+  it('wheel funciona com eixo temporal (xAxis.type: "time")', () => {
+    const chart = new LineChart(canvas, { autoDraw: false, xAxis: { type: 'time' } } as any);
+    const base = 1_700_000_000_000;
+    const x = new Float64Array(
+      [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((i) => base + i * 60_000),
+    ) as unknown as Float64Array<ArrayBufferLike>;
+    const y = new Float64Array([0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50]) as unknown as Float64Array<ArrayBufferLike>;
+    chart.setData(0, x, y);
+    chart.draw();
+
+    const plot = chart['plotRect']();
+    const pxX = plot.x + plot.w / 2;
+    canvas.dispatchEvent(wheel({ deltaY: -100, clientX: pxX, clientY: plot.y + 1 }));
+
+    const vp = chart.getViewport();
+    expect(vp).not.toBeNull();
+    expect(vp!.xMax - vp!.xMin).toBeLessThan(10 * 60_000);
+  });
+
+  it('pan por arraste (pointer drag) desloca a janela e respeita o domínio', () => {
+    const chart = seedChart();
+    chart.setViewport({ xMin: 20, xMax: 40 });
+    const plot = chart['plotRect']();
+    const startPx = plot.x + plot.w / 2;
+
+    canvas.dispatchEvent(pointer('pointerdown', { clientX: startPx, clientY: plot.y + 1 }));
+    canvas.dispatchEvent(pointer('pointermove', { clientX: startPx - 20, clientY: plot.y + 1 }));
+    canvas.dispatchEvent(pointer('pointerup', { clientX: startPx - 20, clientY: plot.y + 1 }));
+
+    const vp = chart.getViewport();
+    expect(vp).not.toBeNull();
+    expect(vp!.xMax - vp!.xMin).toBeCloseTo(20, 5); // largura preservada
+    expect(vp!.xMin).toBeGreaterThan(20); // arrastar para a esquerda revela dados à direita
+  });
+
+  it('pan não ultrapassa o domínio total (clamp preserva a largura da janela)', () => {
+    const chart = seedChart();
+    chart.setViewport({ xMin: 0, xMax: 20 });
+    const plot = chart['plotRect']();
+    const startPx = plot.x + plot.w / 2;
+
+    // Arrasta bem para a direita (revela dados à esquerda) além do limite.
+    canvas.dispatchEvent(pointer('pointerdown', { clientX: startPx, clientY: plot.y + 1 }));
+    canvas.dispatchEvent(pointer('pointermove', { clientX: startPx + 1000, clientY: plot.y + 1 }));
+    canvas.dispatchEvent(pointer('pointerup', { clientX: startPx + 1000, clientY: plot.y + 1 }));
+
+    const vp = chart.getViewport();
+    expect(vp).not.toBeNull();
+    expect(vp!.xMin).toBe(0);
+    expect(vp!.xMax).toBeCloseTo(20, 5); // largura preservada no limite
+  });
+
+  it('pointermove sem arraste move o crosshair (mouse)', () => {
+    const chart = seedChart();
+    const plot = chart['plotRect']();
+    canvas.dispatchEvent(pointer('pointermove', { clientX: plot.x + plot.w / 2, clientY: plot.y + plot.h / 2 }));
+    expect(chart['showCrosshair']).toBe(true);
+  });
+
+  it('pointermove com pointerType touch move o crosshair', () => {
+    const chart = seedChart();
+    const plot = chart['plotRect']();
+    canvas.dispatchEvent(
+      pointer('pointermove', { clientX: plot.x + plot.w / 2, clientY: plot.y + plot.h / 2, pointerType: 'touch' }),
+    );
+    expect(chart['showCrosshair']).toBe(true);
+  });
+
+  it('pointerleave fora de um arraste esconde o crosshair', () => {
+    const chart = seedChart();
+    const plot = chart['plotRect']();
+    canvas.dispatchEvent(pointer('pointermove', { clientX: plot.x + plot.w / 2, clientY: plot.y + plot.h / 2 }));
+    expect(chart['showCrosshair']).toBe(true);
+    canvas.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true }));
+    expect(chart['showCrosshair']).toBe(false);
+  });
+
+  it('pointerleave durante um arraste não esconde o crosshair', () => {
+    const chart = seedChart();
+    chart.setViewport({ xMin: 20, xMax: 40 });
+    const plot = chart['plotRect']();
+    const startPx = plot.x + plot.w / 2;
+
+    canvas.dispatchEvent(pointer('pointerdown', { clientX: startPx, clientY: plot.y + 1 }));
+    canvas.dispatchEvent(pointer('pointermove', { clientX: startPx - 10, clientY: plot.y + 1 }));
+    canvas.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true }));
+    expect(chart['showCrosshair']).toBe(true);
+    expect(chart['dragging']).toBe(true);
+  });
+
+  it('wheel não é ignorado (preventDefault chamado para não rolar a página)', () => {
+    const chart = seedChart();
+    const plot = chart['plotRect']();
+    const evt = wheel({ deltaY: -100, clientX: plot.x + plot.w / 2, clientY: plot.y + 1 });
+    const spy = vi.spyOn(evt, 'preventDefault');
+    canvas.dispatchEvent(evt);
+    expect(spy).toHaveBeenCalled();
+  });
+
+  it('touch-action da canvas é "none" para permitir pan/zoom customizados', () => {
+    seedChart();
+    expect(canvas.style.touchAction).toBe('none');
+  });
+
+  it('pointerdown fora do plot não inicia arraste', () => {
+    const chart = seedChart();
+    canvas.dispatchEvent(pointer('pointerdown', { clientX: 0, clientY: 0 }));
+    expect(chart['dragging']).toBe(false);
+  });
+
+  it('destroy remove os listeners de pointer/wheel sem lançar', () => {
+    const chart = seedChart();
+    expect(() => chart.destroy()).not.toThrow();
+    const plot = { x: 56, y: 16, w: 328, h: 152 };
+    expect(() =>
+      canvas.dispatchEvent(pointer('pointermove', { clientX: plot.x + plot.w / 2, clientY: plot.y + plot.h / 2 })),
+    ).not.toThrow();
+  });
+
+  it('pinch (dois dedos afastando) aplica zoom no centroide', () => {
+    const chart = seedChart();
+    const plot = chart['plotRect']();
+    const midY = plot.y + plot.h / 2;
+    const centre = plot.x + plot.w / 2;
+
+    // Two fingers land straddling the centroid.
+    canvas.dispatchEvent(
+      pointer('pointerdown', { clientX: centre - 20, clientY: midY, pointerId: 10, pointerType: 'touch' }),
+    );
+    canvas.dispatchEvent(
+      pointer('pointerdown', { clientX: centre + 20, clientY: midY, pointerId: 11, pointerType: 'touch' }),
+    );
+    expect(chart['pinching']).toBe(true);
+
+    // First pinch move seeds the baseline (no viewport change yet).
+    canvas.dispatchEvent(
+      pointer('pointermove', { clientX: centre - 20, clientY: midY, pointerId: 10, pointerType: 'touch' }),
+    );
+    expect(chart.getViewport()).toBeNull();
+
+    // Spread the fingers apart → zoom in (viewport window shrinks).
+    canvas.dispatchEvent(
+      pointer('pointermove', { clientX: centre - 100, clientY: midY, pointerId: 10, pointerType: 'touch' }),
+    );
+    canvas.dispatchEvent(
+      pointer('pointermove', { clientX: centre + 100, clientY: midY, pointerId: 11, pointerType: 'touch' }),
+    );
+    const vp = chart.getViewport();
+    expect(vp).not.toBeNull();
+    expect(vp!.xMax - vp!.xMin).toBeLessThan(100);
+  });
+
+  it('lift de um dedo durante pinch faz handoff para pan de um dedo', () => {
+    const chart = seedChart();
+    const plot = chart['plotRect']();
+    const midY = plot.y + plot.h / 2;
+    const centre = plot.x + plot.w / 2;
+
+    canvas.dispatchEvent(
+      pointer('pointerdown', { clientX: centre - 20, clientY: midY, pointerId: 10, pointerType: 'touch' }),
+    );
+    canvas.dispatchEvent(
+      pointer('pointerdown', { clientX: centre + 20, clientY: midY, pointerId: 11, pointerType: 'touch' }),
+    );
+    expect(chart['pinching']).toBe(true);
+
+    // Lift finger 11 → pinch ends, finger 10 becomes the pan anchor.
+    canvas.dispatchEvent(
+      pointer('pointerup', { clientX: centre + 20, clientY: midY, pointerId: 11, pointerType: 'touch' }),
+    );
+    expect(chart['pinching']).toBe(false);
+    expect(chart['dragging']).toBe(true);
+  });
+});

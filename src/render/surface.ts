@@ -20,6 +20,15 @@ export class Surface {
 
   private offCanvas: HTMLCanvasElement | null = null;
   private offCtx: CanvasRenderingContext2D | null = null;
+  /**
+   * Cached canvas position (left/top in viewport CSS pixels). Interaction
+   * handlers call {@link clientRect} on every pointer/wheel event; without
+   * this cache every event pays a `getBoundingClientRect()`, which forces
+   * layout when combined with any style read since the last frame. Cache is
+   * invalidated on resize (via {@link measure}) and on scroll/zoom (via
+   * {@link invalidateClientRect}, wired from ChartBase).
+   */
+  private cachedRect: { left: number; top: number } | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -58,7 +67,28 @@ export class Surface {
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     this.offCanvas = null;
     this.offCtx = null;
+    // A resize almost always coincides with the canvas moving in the page,
+    // so drop the cached position too.
+    this.cachedRect = null;
     return true;
+  }
+
+  /**
+   * Canvas `{ left, top }` in viewport CSS pixels — a cached alternative to
+   * `canvas.getBoundingClientRect()` for hot input paths. The cache is
+   * invalidated on {@link measure} and by {@link invalidateClientRect}
+   * (called by ChartBase on window scroll / visualViewport changes).
+   */
+  clientRect(): { left: number; top: number } {
+    if (this.cachedRect) return this.cachedRect;
+    const r = this.canvas.getBoundingClientRect();
+    this.cachedRect = { left: r.left, top: r.top };
+    return this.cachedRect;
+  }
+
+  /** Drop the cached rect (call after scroll or ancestor layout change). */
+  invalidateClientRect(): void {
+    this.cachedRect = null;
   }
 
   /** Get the offscreen context (lazily created), ready in CSS-pixel coords. */

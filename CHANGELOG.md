@@ -5,6 +5,133 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] — 2026-07-10
+
+### Added
+
+- **Viewport controlável (`setViewport` / `getViewport` / `resetViewport`).**
+  Nova API que define uma janela X visível independentemente do domínio
+  auto/streaming. Quando ativa, ela é a fonte de verdade de mais alta
+  prioridade — curto-circuita `updateGridDomain` antes de qualquer lógica
+  de streaming / `fixedY` / grid-pinned. Clamped à extensão de dados;
+  uma janela mais larga que os dados equivale a `resetViewport()`. Novo
+  evento tipado `viewportchange` emitido em cada mudança (setViewport,
+  zoom, pan, reset ou reclamp automático).
+- **Zoom por roda (wheel).** Gira o mouse em cima do plot para dar
+  zoom-in/out mantendo o ponto sob o cursor ancorado. `deltaY` é
+  normalizado por `deltaMode` (linhas × 16px, páginas × 400px), clampado
+  em ±500 por evento (evita picos de driver) e composto exponencialmente:
+  100 px de scroll ≈ 22 % de zoom. Mesma sensação em mouse coarse e
+  touchpad de precisão, sem explodir sob touchpads de alta frequência.
+- **Pan por arrastar.** `pointerdown` dentro do plot seguido de
+  `pointermove` desloca a janela do viewport, com shift-clamp nas bordas
+  (preserva largura ao chegar no extremo). Sinal segue a convenção
+  natural: arrastar para a direita revela dados mais antigos.
+- **Pinch-to-zoom (dois dedos, touch).** Enquanto exatamente dois
+  pointers estão em contato com o canvas, o gesto aplica zoom pela razão
+  de distâncias entre eles (ancorado no centroide) e pan pelo movimento
+  do centroide. Ao levantar um dedo, faz handoff automático para pan de
+  um dedo (`dragging = true`, novo âncora = dedo restante). Crosshair
+  fica suprimido durante o pinch. Factor clampado em [0.5, 2] por frame.
+- **Auto-scale Y dentro do viewport (`Viewport.yAuto`).** Por padrão
+  (`yAuto: true`), quando o viewport está ativo, o eixo Y é reescalado
+  para as amostras visíveis dentro de `[xMin, xMax]` — dar zoom num vale
+  passa a preencher o plot verticalmente em vez de ficar rente ao pico
+  global. Vale tanto para séries não-stacked (min/max dos valores) como
+  para stacked groups (acumulação positive/negative por índice, mesma
+  regra de `accumulateStackGroup`). `ChartOpts.yMin`/`yMax` ainda ganham.
+  Passe `yAuto: false` para manter o comportamento antigo (Y do extent
+  full). Preservado entre pans/zooms subsequentes.
+- **Pointer Events** substituem os handlers de mouse legados. Mouse,
+  caneta e touch entram por `pointermove` / `pointerdown` / `pointerup` /
+  `pointercancel` / `pointerleave` unificados. `canvas.style.touchAction =
+'none'` desabilita gestos nativos só no canvas — outros elementos da
+  página continuam rolando normalmente.
+- **Reclamp automático de viewport em streaming.** `append`,
+  `appendBatch`, `appendFrame`, `setData`, `setMaxPoints` e `clear`
+  chamam `reclampViewportToExtent()` internamente: se a janela ativa
+  saiu do extent (ring deslizou, série encolheu, dados limpos), aplica
+  shift-clamp preservando largura; se ficou mais larga que o extent,
+  faz reset; se ficou sem dados, libera o viewport. Emite
+  `viewportchange` só quando a janela realmente moveu.
+- 2 testes de pinch (spread → zoom-in; handoff pinch→pan preserva
+  `dragging`).
+
+### Fixed
+
+- **Vazamento de séries para fora do plot rect.** Antes, sem
+  `ctx.clip()`, uma janela de viewport estreita gerava `xScale` gigante
+  e projetava amostras fora do domínio para pixels bem além do plot rect
+  — o Canvas 2D desenhava esses `lineTo` livremente por cima dos labels
+  do eixo e nos cantos. `renderStatic` agora envolve séries + legenda
+  com `save() / rect(plot) / clip() / restore()`. Grid e axes ficam
+  FORA do clip (labels precisam desenhar na área de padding), então
+  nada quebra visualmente.
+- **Zoom sem repaint até o próximo pointermove.** Sob `autoDraw: false`
+  (default), `invalidate('layout')` só marcava dirty e nunca agendava
+  rAF, então o pixel do zoom só surgia no próximo evento de mouse.
+  `onWheel` agora chama `scheduleInteractionFrame()` que faz o repaint
+  no próximo rAF.
+- **`onPointerLeave` durante pinch** — a guard só protegia `dragging`;
+  agora também checa `pinching`, para o crosshair não ser escondido no
+  meio de um gesto de dois dedos que cruza a borda do canvas.
+
+### Performance
+
+- **Windowed rendering (`math/window.ts`).** Novo helper
+  `resolveRenderWindow(view, xMin, xMax)` binary-searches
+  `view.bracketLogical` para bracketar o intervalo lógico visível (+1
+  amostra de contexto em cada borda para segmentos de entrada/saída).
+  `renderLine`, `renderArea`, `renderScatter` e `renderStackedBands`
+  agora iteram `[iStart, iEnd]` em vez de `[0, count)`. Numa série de
+  500k pontos com zoom em 1 % da largura, o rendering passa de O(500k)
+  para O(~5k) por série por frame. Fallback seguro para xRange = 0
+  (série de 1 ponto) e domínio não-finito.
+- **rAF-coalescing de interação.** Bursts de wheel (touchpads emitem
+  60–120 eventos/s) e `pointermove` (até 240 Hz em alguns dispositivos)
+  agora colapsam em 1 draw por frame via `interactionRafId` (separado
+  do `rafScheduled` do autoDraw). Estado (viewport, cursor, dragging)
+  ainda muta síncrono — `getViewport()` reflete a interação
+  imediatamente; só o repaint é coalescido.
+- **Pool de views (`PooledView`).** Duas pools de instâncias reutilizáveis
+  substituem o `Object.assign(Object.create(prototype), …)` por série
+  por frame: `viewSlotRender` (1 slot para `renderOne`) e
+  `viewPoolCrosshair[N]` (um slot por série para `buildCrosshairViews`).
+  A classe delega `physOf`/`bracketLogical` para o store bound, então
+  ring wraparound continua correto. Elimina ~360 alocações/s em gestos
+  com 3 séries + crosshair.
+- **Cache do bounding rect.** `Surface.clientRect()` cacheia a posição
+  do canvas em CSS pixels; `Surface.invalidateClientRect()` é chamado
+  pelo `handleWindowLayoutShift` (novo listener `scroll` com
+  `capture: true` + `resize` na window, ambos passivos), invalidando em
+  qualquer scroll ancestral. Handlers `onPointerMove` / `onPointerDown`
+  / `onWheel` deixaram de chamar `getBoundingClientRect()` a cada
+  evento — remove um layout-forcer do hot path.
+
+### Changed
+
+- `Viewport` ganhou o campo opcional `yAuto?: boolean` (default `true`).
+  `null | undefined` em `getViewport()` continua significando "sem
+  viewport".
+- Comportamento do zoom por wheel: uma volta grande do scroll agora dá
+  um zoom maior (composição exponencial em vez de fator fixo de 1.1
+  por evento) — o feel é diferente, mas o sentido (deltaY > 0 = zoom
+  out) e a semântica de teste (`getViewport()` reflete o efeito
+  sincronamente) foram preservados.
+
+### Notes
+
+- **Semver.** Minor. API adicional, sem quebra: `Viewport.yAuto` é
+  opcional, o comportamento antigo (Y do extent full) é acessível via
+  `yAuto: false`. Consumidores que já usavam `setViewport({ xMin, xMax })`
+  passam automaticamente a ter auto-Y — visualmente diferente do v1.6.0,
+  mas dentro do escopo aditivo da fase.
+- **Escopo v1.7.0.** Todos os critérios de aceite em
+  `docs/phases/v1.7.0-viewport-zoom-pan.md` estão cobertos, incluindo os
+  extras de pinch e auto-Y (que a fase original marcava como "Y fora de
+  escopo" — vieram junto pois o diagnóstico revelou que sem eles o
+  zoom não parecia responder).
+
 ## [1.6.0] — 2026-07-09
 
 ### Fixed

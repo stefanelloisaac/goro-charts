@@ -27,5 +27,7 @@ export type {
   XAxisConfig,
   YAxisConfig,
   TooltipConfig,
+  Viewport,
+  ViewportChangeEvent,
 } from './types.ts';
 export type { SeriesHit } from './render/crosshair.ts';

@@ -26,7 +26,8 @@ Minimal high-performance chart engine. **Canvas 2D only. Zero runtime dependenci
 - Offscreen static layer — crosshair repaint is instant
 - Built-in legend and multi-series crosshair with an interpolated tooltip card
 - `appendFrame` — atomically stream one sample per series with automatic carry-forward
-- Typed events (`frameappended`, `destroy`) with add/remove listeners
+- Typed events (`frameappended`, `viewportchange`, `destroy`) with add/remove listeners
+- Wheel zoom, drag pan, and two-finger pinch out of the box (Pointer Events, touch-aware); auto-Y rescales to the visible window
 - `ResizeObserver` auto-sizing, `rAF`-coalesced auto-draw
 
 ```bash
@@ -334,10 +335,11 @@ chart.on('destroy', () => {
 chart.off('frameappended', myHandler);
 ```
 
-| Event           | Payload                                      | When                              |
-| --------------- | -------------------------------------------- | --------------------------------- |
-| `frameappended` | `{ seriesUpdated: number; render: boolean }` | After every `appendFrame` call    |
-| `destroy`       | `{}`                                         | Once, just before listeners clear |
+| Event            | Payload                                      | When                                                                        |
+| ---------------- | -------------------------------------------- | --------------------------------------------------------------------------- |
+| `frameappended`  | `{ seriesUpdated: number; render: boolean }` | After every `appendFrame` call                                              |
+| `viewportchange` | `{ xMin: number; xMax: number }`             | After `setViewport` / `resetViewport` / wheel / drag / pinch / auto-reclamp |
+| `destroy`        | `{}`                                         | Once, just before listeners clear                                           |
 
 ---
 
@@ -587,6 +589,60 @@ new LineChart(canvas, {
 ```
 
 When both are `0` (the default) the grid domain expands automatically from data.
+
+---
+
+## Viewport, zoom, pan
+
+Interact with the chart directly (mouse, touchpad, touch) or drive the visible
+X window programmatically. Both paths funnel through the same viewport: whichever
+was set most recently wins, and every change emits `viewportchange`.
+
+### Built-in gestures
+
+- **Wheel zoom.** Rolling the mouse wheel over the plot zooms in/out anchored at
+  the cursor. `deltaY` is normalised across `deltaMode` (line / page / pixel) and
+  clamped per event, so a coarse mouse wheel and a high-precision touchpad both
+  feel natural.
+- **Drag pan.** `pointerdown` inside the plot followed by `pointermove` shifts
+  the window. Pan respects the data extent — dragging past the edge locks the
+  edge in place and preserves the window width.
+- **Pinch zoom + pan (touch).** Two fingers on the canvas: distance drives zoom
+  (anchored at the centroid), centroid movement drives pan. Lift one finger and
+  the gesture hands off to single-finger pan automatically.
+- **Keyboard.** `ArrowLeft` / `ArrowRight` step the crosshair one sample
+  (`Shift` = 10); `Escape` hides it. The canvas is focusable (`tabIndex: 0`).
+
+`canvas.style.touchAction = 'none'` is set automatically so gestures reach the
+chart without blocking scroll on the rest of the page.
+
+### Programmatic viewport
+
+```ts
+// Zoom into a specific X range
+chart.setViewport({ xMin: 100, xMax: 200 });
+
+// Same, but keep Y anchored to the full-data extent
+chart.setViewport({ xMin: 100, xMax: 200, yAuto: false });
+
+// Read the current window (null when no viewport is set)
+const vp = chart.getViewport();
+
+// Clear and return to the auto/streaming domain
+chart.resetViewport();
+
+// React to any viewport change (gesture-driven or programmatic)
+chart.on('viewportchange', ({ xMin, xMax }) => {
+  console.log(`viewport = [${xMin}, ${xMax}]`);
+});
+```
+
+`Viewport.yAuto` (default `true`) rescales Y to the samples inside the visible X
+window — zooming into a small feature makes it fill the plot vertically instead
+of staying flat against the global peak. `ChartOpts.yMin`/`yMax` still win over
+auto-Y. Under streaming mode, `append` / `appendFrame` / `setMaxPoints` /
+`clear` automatically shift-clamp the viewport when the ring slides so the
+window never strays outside the data.
 
 ---
 

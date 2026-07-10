@@ -18,6 +18,7 @@
  */
 
 import type { SeriesView, PlotRect, ResolvedOpts } from '../types.ts';
+import { resolveRenderWindow } from '../math/window.ts';
 
 /**
  * One decimated pixel column. 5 numbers per column: centre-x and the four Y
@@ -69,6 +70,13 @@ export function renderArea(ctx: CanvasRenderingContext2D, view: SeriesView, plot
   const { xArr, yArr, count: n, cap } = view;
   if (n === 0) return;
 
+  // v1.7.0 windowing: limit iteration to the samples that can affect the
+  // visible plot columns. Under a narrow viewport this drops per-frame work
+  // from O(total points) to O(visible points).
+  const win = resolveRenderWindow(view, view.xMin, view.xMax);
+  if (win.iEnd < win.iStart) return;
+  const nVisible = win.iEnd - win.iStart + 1;
+
   const xRange = view.xMax - view.xMin;
   const yRange = view.yMax - view.yMin;
   const xScale = xRange > 0 ? plot.w / xRange : 0;
@@ -80,14 +88,14 @@ export function renderArea(ctx: CanvasRenderingContext2D, view: SeriesView, plot
   // fixture) omits gapMode — ResolvedOpts always sets it in production.
   const gapMode = opts.gapMode ?? 'break';
 
-  let p = view.head;
-  let toWrap = cap - view.head;
+  let p = win.pStart;
+  let toWrap = win.toWrapStart;
 
   ctx.lineJoin = 'round';
 
   const N_DENSE = plot.w * 2;
 
-  if (n > N_DENSE) {
+  if (nVisible > N_DENSE) {
     // ---- Decimated: one pass collecting column data grouped into runs,
     // split on an all-gap column under 'break' — then paint each run.
     const runs: ColData[][] = [];
@@ -108,7 +116,7 @@ export function renderArea(ctx: CanvasRenderingContext2D, view: SeriesView, plot
       }
     };
 
-    for (let i = 0; i < n; i++) {
+    for (let i = win.iStart; i <= win.iEnd; i++) {
       const px = xOff + xArr[p] * xScale;
       const c = px | 0;
       const rawY = yArr[p];
@@ -143,12 +151,12 @@ export function renderArea(ctx: CanvasRenderingContext2D, view: SeriesView, plot
 
     for (const run of runs) paintRun(ctx, run, bottomY, opts);
   } else {
-    // ---- Sparse: collect points into runs (n is small, ≤ 2×plot.w), then paint each.
+    // ---- Sparse: collect points into runs (nVisible is small, ≤ 2×plot.w), then paint each.
     const runs: ColData[][] = [];
     let currentRun: ColData[] = [];
-    p = view.head;
-    toWrap = cap - view.head;
-    for (let i = 0; i < n; i++) {
+    p = win.pStart;
+    toWrap = win.toWrapStart;
+    for (let i = win.iStart; i <= win.iEnd; i++) {
       const rawY = yArr[p];
       const isGap = Number.isNaN(rawY);
 

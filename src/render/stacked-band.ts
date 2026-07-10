@@ -23,6 +23,7 @@
  */
 
 import type { SeriesView, PlotRect, Domain } from '../types.ts';
+import { resolveRenderWindow } from '../math/window.ts';
 
 interface LayerStyle {
   lineColor: string;
@@ -57,10 +58,19 @@ export function renderStackedBands(
   plot: PlotRect,
   domain: Domain,
 ): void {
-  const n = stores[0].count;
-  if (n === 0) return;
-
   const first = stores[0];
+  if (first.count === 0) return;
+
+  // v1.7.0 windowing: only iterate the samples inside the visible domain.
+  // Cumulative Y at each logical index is a sum *across layers* at that same
+  // index — it does NOT depend on samples at lower indices — so restricting
+  // the logical range to `[iStart, iEnd]` produces the exact same cumulative
+  // values for the visible slice as the full-range version, at O(nVis * L)
+  // work instead of O(nTotal * L).
+  const win = resolveRenderWindow(first, domain.xMin, domain.xMax);
+  if (win.iEnd < win.iStart) return;
+  const nVis = win.iEnd - win.iStart + 1;
+
   const { xArr, cap } = first;
 
   const xRange = domain.xMax - domain.xMin;
@@ -76,19 +86,18 @@ export function renderStackedBands(
   const clampY = (yPx: number): number => (yPx < topY ? topY : yPx > bottomY ? bottomY : yPx);
   const py = (cumY: number): number => clampY(yOff - cumY * yScale);
 
-  // Pre-compute cumulative Y for each layer (logical order). A `NaN` sample
-  // (v1.6.0 gap) contributes 0 at that index instead of poisoning every
-  // later cumulative value with `NaN` for the rest of the series —
-  // documented stacking-gap contract (§6.4: "stacking trata ausência de
-  // forma documentada"). Per-layer visual break rendering within a band is
-  // out of scope; only the cumulative-sum correctness is fixed here.
+  // Pre-compute cumulative Y for each layer, but only over the visible
+  // window `[iStart, iEnd]`. A `NaN` sample (v1.6.0 gap) contributes 0 at
+  // that index instead of poisoning the sum — documented stacking-gap
+  // contract (§6.4). Each layer starts at its own physical slot for
+  // `iStart` via `physOf`, so ring wraparound still works.
   const cumYArr: Float64Array[] = [];
-  const running = new Float64Array(n);
+  const running = new Float64Array(nVis);
   for (let li = 0; li < stores.length; li++) {
     const s = stores[li];
-    let p = s.head;
-    let toWrap = s.cap - s.head;
-    for (let j = 0; j < n; j++) {
+    let p = s.physOf(win.iStart);
+    let toWrap = s.cap - p;
+    for (let j = 0; j < nVis; j++) {
       const v = s.yArr[p];
       if (!Number.isNaN(v)) running[j] += v;
       if (--toWrap === 0) {
@@ -101,10 +110,11 @@ export function renderStackedBands(
 
   ctx.lineJoin = 'round';
 
-  if (n > plot.w * 2) {
-    renderDecimated(ctx, cumYArr, styles, xArr, first.head, cap, xOff, xScale, py, bottomY);
+  const pStart = win.pStart;
+  if (nVis > plot.w * 2) {
+    renderDecimated(ctx, cumYArr, styles, xArr, pStart, cap, xOff, xScale, py, bottomY);
   } else {
-    renderSparse(ctx, cumYArr, styles, xArr, first.head, cap, n, xOff, xScale, py, bottomY);
+    renderSparse(ctx, cumYArr, styles, xArr, pStart, cap, nVis, xOff, xScale, py, bottomY);
   }
 }
 
