@@ -73,9 +73,9 @@ describe('renderLine', () => {
     renderLine(mc, makeView(xs, ys, 0, 100, 0, 999), plot, opts as any);
     expect(mc.calls.beginPath).toBe(1);
     expect(mc.calls.stroke).toBe(1);
-    // No modo decimado, moveTo é chamado 1 vez (started = false)
+    // Sem gaps, o envelope denso é um único sub-path contínuo: um só moveTo,
+    // muitos lineTo (as colunas ligadas horizontalmente + o sweep vertical).
     expect(mc.calls.moveTo.length).toBe(1);
-    // lineTo deve ser chamado muitas vezes (4 por coluna)
     expect(mc.calls.lineTo.length).toBeGreaterThan(100);
   });
 
@@ -143,28 +143,83 @@ describe('renderLine', () => {
       return { xs, ys };
     }
 
-    it('"break": produz mais de um moveTo quando há uma lacuna densa', () => {
+    it('envelope denso sem gap é um único sub-path contínuo', () => {
+      const xs: number[] = [];
+      const ys: number[] = [];
+      for (let i = 0; i < 1000; i++) {
+        xs.push(i);
+        ys.push(Math.sin(i * 0.1) * 40 + 50);
+      }
+      const mc = createMockCtx();
+      renderLine(mc, makeView(xs, ys, 0, 100, 0, 999), plot, opts as any);
+      // Colunas adjacentes ligadas: um só moveTo, muitos lineTo (ribbon contínuo).
+      expect(mc.calls.moveTo.length).toBe(1);
+      expect(mc.calls.lineTo.length).toBeGreaterThan(100);
+    });
+
+    it('"break": quebra o ribbon na lacuna densa (2 sub-paths, sem cruzar o gap)', () => {
       const { xs, ys } = makeDenseGapData(0.4);
       const mc = createMockCtx();
       const breakOpts = { ...opts, gapMode: 'break' };
       renderLine(mc, makeView(xs, ys, 0, 100, 0, 999), plot, breakOpts as any);
-      expect(mc.calls.moveTo.length).toBeGreaterThanOrEqual(2);
+      // Um sub-path antes do gap e outro depois: exatamente 2 moveTo.
+      expect(mc.calls.moveTo.length).toBe(2);
+      // Nenhum salto horizontal longo — o pen levanta em vez de cruzar a lacuna.
+      let maxJump = 0;
+      const pts = mc.calls.path;
+      for (let i = 1; i < pts.length; i++) {
+        if (pts[i].op === 'lineTo') maxJump = Math.max(maxJump, Math.abs(pts[i].x - pts[i - 1].x));
+      }
+      expect(maxJump).toBeLessThan(5);
     });
 
-    it('"connect": produz exatamente 1 moveTo mesmo com lacuna densa', () => {
+    it('"connect": faz a ponte sobre a lacuna densa (1 sub-path contínuo)', () => {
       const { xs, ys } = makeDenseGapData(0.4);
-      const mc = createMockCtx();
-      const connectOpts = { ...opts, gapMode: 'connect' };
-      renderLine(mc, makeView(xs, ys, 0, 100, 0, 999), plot, connectOpts as any);
-      expect(mc.calls.moveTo.length).toBe(1);
+
+      const breakMc = createMockCtx();
+      renderLine(breakMc, makeView(xs, ys, 0, 100, 0, 999), plot, { ...opts, gapMode: 'break' } as any);
+
+      const connectMc = createMockCtx();
+      renderLine(connectMc, makeView(xs, ys, 0, 100, 0, 999), plot, { ...opts, gapMode: 'connect' } as any);
+
+      // 'break' quebra em 2 sub-paths; 'connect' liga tudo num só.
+      expect(breakMc.calls.moveTo.length).toBe(2);
+      expect(connectMc.calls.moveTo.length).toBe(1);
+
+      // A ponte cria um salto horizontal longo (fim antes do gap → início depois).
+      let maxJump = 0;
+      const pts = connectMc.calls.path;
+      for (let i = 1; i < pts.length; i++) {
+        if (pts[i].op === 'lineTo') maxJump = Math.max(maxJump, Math.abs(pts[i].x - pts[i - 1].x));
+      }
+      expect(maxJump).toBeGreaterThan(10);
     });
 
-    it('"zero": produz exatamente 1 moveTo (todo o range vira um único envelope)', () => {
+    it('"zero": inclui lacuna como y=0 no envelope denso contínuo', () => {
       const { xs, ys } = makeDenseGapData(0.4);
       const mc = createMockCtx();
       const zeroOpts = { ...opts, gapMode: 'zero' };
       renderLine(mc, makeView(xs, ys, 0, 100, 0, 999), plot, zeroOpts as any);
+      // Sem coluna vazia: um único sub-path contínuo.
       expect(mc.calls.moveTo.length).toBe(1);
+      expect(mc.calls.lineTo.length).toBeGreaterThan(100);
+      expect(mc.calls.lineTo.some(([, y]) => y === plot.y + plot.h)).toBe(true);
+    });
+
+    it('série densa toda NaN não emite envelope', () => {
+      const xs: number[] = [];
+      const ys: number[] = [];
+      for (let i = 0; i < 1000; i++) {
+        xs.push(i);
+        ys.push(NaN);
+      }
+      const mc = createMockCtx();
+      renderLine(mc, makeView(xs, ys, 0, 100, 0, 999), plot, opts as any);
+
+      expect(mc.calls.moveTo.length).toBe(0);
+      expect(mc.calls.lineTo.length).toBe(0);
+      expect(mc.calls.beginPath).toBe(1);
+      expect(mc.calls.stroke).toBe(1);
     });
   });
 });

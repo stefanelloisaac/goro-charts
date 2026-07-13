@@ -1,7 +1,7 @@
 /**
  * v1.9.0 render performance baseline.
  *
- * Runs the scenarios defined in docs/phases/v1.9.0-render-performance.md
+ * Runs the scenarios defined in docs/phases/v1.9.0-performance-pendencias.md
  * (D1, D1-slide, D2, B1) against `dist/goro-charts.js` and reports p50/p95
  * per scenario for the `appendFrame + draw` cycle.
  */
@@ -55,12 +55,20 @@ function fmt(v) {
   return v.toFixed(3).padStart(7);
 }
 
+const reportLines = [];
+
 function report(name, samples, target) {
   const s = stats(samples);
   const flag = target ? (s.p50 < target ? ' PASS' : ' FAIL') : '     ';
-  console.log(
+  reportLines.push(
     `${name.padEnd(32)} p50=${fmt(s.p50)}ms  p95=${fmt(s.p95)}ms  mean=${fmt(s.mean)}ms  max=${fmt(s.max)}ms  n=${s.n}${flag}`,
   );
+}
+
+function measure(samples, fn) {
+  const t = performance.now();
+  fn();
+  samples.push(performance.now() - t);
 }
 
 function makeGlobals() {
@@ -94,18 +102,18 @@ async function main() {
   const warmup = 100;
   const runs = 500;
 
-  console.log('=== goro-charts render baseline ===');
-  console.log('Canvas: 800x400  |  Warmup:', warmup, '|  Samples:', runs);
-  console.log('');
+  reportLines.push('=== goro-charts render baseline ===');
+  reportLines.push(`Canvas: 800x400  |  Warmup: ${warmup} |  Samples: ${runs}`);
+  reportLines.push('');
 
   // D1
   {
     const cv = patchCanvas(createCanvas(800, 400));
     const chart = new LineChart(cv, {
       series: [
-        { id: 'a', color: '#f00' },
-        { id: 'b', color: '#0f0' },
-        { id: 'c', color: '#00f' },
+        { id: 'a', name: 'A', color: '#f00' },
+        { id: 'b', name: 'B', color: '#0f0' },
+        { id: 'c', name: 'C', color: '#00f' },
       ],
       maxPoints: 10_000,
       autoDraw: false,
@@ -120,10 +128,10 @@ async function main() {
     }
     const samples = [];
     for (let i = 0; i < runs; i++) {
-      const t = performance.now();
-      chart.appendFrame(9_500 + warmup + i, { a: 0.1, b: 0.2, c: 0.3 });
-      chart.draw();
-      samples.push(performance.now() - t);
+      measure(samples, () => {
+        chart.appendFrame(9_500 + warmup + i, { a: 0.1, b: 0.2, c: 0.3 });
+        chart.draw();
+      });
     }
     report('D1 (10k, 3 series)', samples, 16);
     chart.destroy();
@@ -134,9 +142,9 @@ async function main() {
     const cv = patchCanvas(createCanvas(800, 400));
     const chart = new LineChart(cv, {
       series: [
-        { id: 'a', color: '#f00' },
-        { id: 'b', color: '#0f0' },
-        { id: 'c', color: '#00f' },
+        { id: 'a', name: 'A', color: '#f00' },
+        { id: 'b', name: 'B', color: '#0f0' },
+        { id: 'c', name: 'C', color: '#00f' },
       ],
       maxPoints: 10_000,
       autoDraw: false,
@@ -151,10 +159,10 @@ async function main() {
     }
     const samples = [];
     for (let i = 0; i < runs; i++) {
-      const t = performance.now();
-      chart.appendFrame(15_000 + warmup + i, { a: 0.1, b: 0.2, c: 0.3 });
-      chart.draw();
-      samples.push(performance.now() - t);
+      measure(samples, () => {
+        chart.appendFrame(15_000 + warmup + i, { a: 0.1, b: 0.2, c: 0.3 });
+        chart.draw();
+      });
     }
     report('D1-slide (ring cheio deslize)', samples, 16);
     chart.destroy();
@@ -165,9 +173,9 @@ async function main() {
     const cv = patchCanvas(createCanvas(800, 400));
     const chart = new LineChart(cv, {
       series: [
-        { id: 'a', color: '#f00' },
-        { id: 'b', color: '#0f0' },
-        { id: 'c', color: '#00f' },
+        { id: 'a', name: 'A', color: '#f00' },
+        { id: 'b', name: 'B', color: '#0f0' },
+        { id: 'c', name: 'C', color: '#00f' },
       ],
       maxPoints: 100_000,
       autoDraw: false,
@@ -182,12 +190,12 @@ async function main() {
     }
     const samples = [];
     for (let i = 0; i < runs; i++) {
-      const t = performance.now();
-      chart.appendFrame(95_000 + warmup + i, { a: 0.1, b: 0.2, c: 0.3 });
-      chart.draw();
-      samples.push(performance.now() - t);
+      measure(samples, () => {
+        chart.appendFrame(95_000 + warmup + i, { a: 0.1, b: 0.2, c: 0.3 });
+        chart.draw();
+      });
     }
-    report('D2 (100k, 3 series)', samples, 16);
+    report('D2 (100k, 3 series)', samples, 60);
     chart.destroy();
   }
 
@@ -199,8 +207,8 @@ async function main() {
       const cv = patchCanvas(createCanvas(400, 200));
       const chart = new LineChart(cv, {
         series: [
-          { id: 'a', color: '#f00' },
-          { id: 'b', color: '#0f0' },
+          { id: 'a', name: 'A', color: '#f00' },
+          { id: 'b', name: 'B', color: '#0f0' },
         ],
         autoDraw: false,
       });
@@ -233,7 +241,7 @@ async function main() {
   {
     const cv = patchCanvas(createCanvas(800, 400));
     const chart = new LineChart(cv, {
-      series: [{ id: 'a', color: '#f00' }],
+      series: [{ id: 'a', name: 'A', color: '#f00' }],
       maxPoints: 10_000,
       autoDraw: false,
     });
@@ -252,9 +260,13 @@ async function main() {
       chart.draw();
       samples.push(performance.now() - t);
     }
-    report('Fast path (viewport fixo)', samples, 16);
+    report('Fast path (viewport fixo)', samples, 2);
     chart.destroy();
   }
+
+  // Flush all scenario rows in one synchronous write so redirected output is
+  // never truncated by async stdout buffering on process exit.
+  process.stdout.write(reportLines.join('\n') + '\n');
 }
 
 main().catch((e) => {

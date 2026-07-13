@@ -14,6 +14,8 @@ export interface MockCtxCalls {
   strokeRect: Array<[number, number, number, number]>;
   fillText: Array<[string, number, number]>;
   measureText: Array<string>;
+  /** Ordered log of moveTo/lineTo ops, for tests that assert path continuity. */
+  path: Array<{ op: 'moveTo' | 'lineTo'; x: number; y: number }>;
 }
 
 export interface MockCtxState {
@@ -39,6 +41,7 @@ export function createMockCtx(): CanvasRenderingContext2D & { calls: MockCtxCall
     strokeRect: [],
     fillText: [],
     measureText: [],
+    path: [],
   };
 
   const state: MockCtxState = {
@@ -115,9 +118,11 @@ export function createMockCtx(): CanvasRenderingContext2D & { calls: MockCtxCall
     },
     moveTo(x: number, y: number) {
       calls.moveTo.push([x, y]);
+      calls.path.push({ op: 'moveTo', x, y });
     },
     lineTo(x: number, y: number) {
       calls.lineTo.push([x, y]);
+      calls.path.push({ op: 'lineTo', x, y });
     },
     arc(x: number, y: number, r: number, sa: number, ea: number) {
       calls.arc.push([x, y, r, sa, ea]);

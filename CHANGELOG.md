@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   all — only the series buffer clears, redraws, and composites. The fallback
   "repositioning" fast path refreshes frame positions while reusing cached label
   strings when tick values are unchanged but positions shifted.
+- **Dense line envelope stroke.** Dense line rendering now uses vertical
+  per-column envelope strokes by default, reducing Canvas path complexity in
+  large streaming windows while preserving the visible min/max envelope.
 
 ### Changed
 
@@ -56,20 +59,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   crosshair pixels on the visible canvas — most visible on synced charts
   where the non-hovered chart drew ghost lines.
 
-### Performance (node-canvas 3.2.3, 800×400, 500 samples)
+### Performance (node-canvas 3.2.3, 800×400)
 
 | Scenario                       | v1.8.0   | v1.9.0      | Delta    |
 | ------------------------------ | -------- | ----------- | -------- |
-| D1 (10k × 3 séries, ring)      | 21.3 ms  | 18.0 ms     | −15%     |
-| D1-slide (ring cheio, deslize) | 21.0 ms  | 16.7 ms     | −20%     |
-| D2 (100k × 3 séries, ring)     | 193 ms   | 163 ms      | −16%     |
-| B1 (20 charts × 2 séries)      | 123.6 ms | **34.0 ms** | **−72%** |
-| Fast path (viewport fixo)      | 2.4 ms   | **0.5 ms**  | **−79%** |
+| D1 (10k × 3 séries, ring)      | 21.3 ms  | **7.1 ms**  | **−67%** |
+| D1-slide (ring cheio, deslize) | 21.0 ms  | **7.3 ms**  | **−65%** |
+| D2 (100k × 3 séries, ring)     | 193 ms   | **57.5 ms** | **−70%** |
+| B1 (20 charts × 2 séries)      | 123.6 ms | **22.7 ms** | **−82%** |
+| Fast path (viewport fixo)      | 2.4 ms   | **0.6 ms**  | **−74%** |
 
-D1/D1-slide don't hit the 16ms target — the streaming-ring sliding path
-still redraws the full decimated series each tick because the domain moves
-each frame. Append-only rendering is documented as GATE 1 (deferred) in
-`docs/phases/v1.9.0-baseline.md`.
+D1 and D1-slide now meet the 16ms frame target with dense line envelope
+strokes. D2 remains above one-frame budget by design, but now has an explicit
+60ms p50 target and a documented ~70% improvement over 1.8.0. Deferred
+optimizations are tracked in `docs/phases/v1.9.0-performance-pendencias.md`.
 
 ## [1.8.0] — 2026-07-10
 

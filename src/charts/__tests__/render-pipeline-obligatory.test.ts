@@ -7,7 +7,7 @@
  *   - crosshair move não invalida frame nem series
  *   - deslize preservando conjunto de ticks NÃO chama formatTimeTick/formatNumber
  *   - resize invalida frame + series
- *   - mudança de cor/lineWidth de série invalida series (via structural setOptions)
+ *   - mudança visual de série invalida series e legenda quando necessário
  *   - dual-Y continua desenhando eixo direito no fast path
  *   - stacked area continua correto no fast path
  *   - clip de séries aplicado apenas à series layer
@@ -435,18 +435,41 @@ describe('v1.9.0 FASE 7 — cor/lineWidth de série invalida series', () => {
     vi.useRealTimers();
   });
 
-  it('setOptions com "series" (structural) invalida series + frame + domain', () => {
+  it('setOptions com estilo visual de uma série invalida só series', () => {
     const chart = new LineChart(canvas, {
-      series: [{ id: 's1', color: '#f00' }],
+      series: [{ id: 's1', name: 'S1', color: '#f00', lineWidth: 1 }],
       autoDraw: false,
     } as any);
     chart.setData(0, new Float64Array([0, 1]) as any, new Float64Array([0, 1]) as any);
     chart.draw();
 
-    // Muda cor da série (structural pois usa `series`)
-    chart.setOptions({ series: [{ id: 's1', color: '#0f0' }] } as any);
+    chart.setOptions({ series: [{ id: 's1', name: 'S1', color: '#0f0', lineWidth: 2 }] } as any);
 
-    expect((chart as any).dirtyDomain).toBe(true);
+    expect((chart as any).dirtyDomain).toBe(false);
+    expect((chart as any).dirtyFrame).toBe(false);
+    expect((chart as any).dirtySeries).toBe(true);
+  });
+
+  it('setOptions com estilo visual que afeta legenda invalida series + frame, sem domain', () => {
+    const chart = new LineChart(canvas, {
+      series: [
+        { id: 'a', name: 'A', color: '#f00' },
+        { id: 'b', name: 'B', color: '#00f' },
+      ],
+      autoDraw: false,
+    } as any);
+    chart.setData('a', new Float64Array([0, 1]) as any, new Float64Array([0, 1]) as any);
+    chart.setData('b', new Float64Array([0, 1]) as any, new Float64Array([1, 0]) as any);
+    chart.draw();
+
+    chart.setOptions({
+      series: [
+        { id: 'a', name: 'A', color: '#0f0' },
+        { id: 'b', name: 'B', color: '#00f' },
+      ],
+    } as any);
+
+    expect((chart as any).dirtyDomain).toBe(false);
     expect((chart as any).dirtyFrame).toBe(true);
     expect((chart as any).dirtySeries).toBe(true);
   });

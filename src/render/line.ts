@@ -5,9 +5,9 @@
  *
  *  - Dense (count > 2·plotW): per-pixel-column min/max decimation. Drawing
  *    every point would smear into a solid band and alias badly; instead each
- *    pixel column collapses to first→min→max→last, joined so adjacent columns
- *    form one continuous ribbon (the signal's visual envelope). Collapses
- *    500k points to ~2·width segments.
+ *    pixel column collapses to its min→max range and adjacent columns are
+ *    joined into one continuous ribbon (the signal's visual envelope).
+ *    Collapses 500k points to ~width segments.
  *
  *  - Sparse: the real polyline, point for point.
  *
@@ -20,6 +20,12 @@
  *  - `'connect'`: the gap sample is skipped, so its valid neighbours join
  *    directly.
  *  - `'zero'`: the gap sample is treated as `0` for this draw only.
+ *
+ * In the dense regime the envelope is one continuous ribbon: adjacent columns
+ * are always joined horizontally. `gapMode` only decides what happens at an
+ * empty (all-NaN) column: `'break'` lifts the pen so the ribbon does not cross
+ * the gap; `'connect'` keeps the pen down so the ribbon bridges across;
+ * `'zero'` folds gap samples into the envelope as `0` (no empty column).
  */
 
 import type { SeriesView, PlotRect, ResolvedOpts } from '../types.ts';
@@ -29,7 +35,6 @@ import { resolveRenderWindow } from '../math/window.ts';
 export function renderLine(ctx: CanvasRenderingContext2D, view: SeriesView, plot: PlotRect, opts: ResolvedOpts): void {
   const { xArr, yArr, count: n, cap } = view;
   if (n === 0) return;
-
   // v1.7.0 windowing: iterate only the logical range that can affect a pixel
   // column, not the whole series. Under an active viewport this collapses a
   // 500k-point series to ≈ 2·plot.w work per frame.
@@ -39,8 +44,9 @@ export function renderLine(ctx: CanvasRenderingContext2D, view: SeriesView, plot
 
   ctx.strokeStyle = opts.lineColor;
   ctx.lineWidth = opts.lineWidth;
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
+  const dense = nVisible > plot.w * 2;
+  ctx.lineJoin = dense ? 'bevel' : 'round';
+  ctx.lineCap = dense ? 'butt' : 'round';
   ctx.beginPath();
 
   const xRange = view.xMax - view.xMin;
@@ -56,35 +62,39 @@ export function renderLine(ctx: CanvasRenderingContext2D, view: SeriesView, plot
   let p = win.pStart;
   let toWrap = win.toWrapStart;
 
-  if (nVisible > plot.w * 2) {
+  if (dense) {
     let col = -1;
     let colMinY = 0;
     let colMaxY = 0;
-    let colFirstY = 0;
-    let colLastY = 0;
     let colHasData = false;
-    // Whether a sub-path is currently open (moveTo already issued) — the
-    // decimation-loop equivalent of a "pen down" state.
-    let segOpen = false;
+    // The envelope is ONE continuous sub-path: each populated column joins the
+    // previous one horizontally, then sweeps its own min↔max range, so adjacent
+    // columns form a solid ribbon (not isolated vertical dashes). `penDown`
+    // tracks whether the sub-path is open. A 'break' gap lifts the pen; a
+    // 'connect' gap keeps it down so the ribbon bridges across.
+    let penDown = false;
 
     const flush = (cx: number) => {
-      ctx.lineTo(cx, colFirstY);
-      ctx.lineTo(cx, colMinY);
+      // Enter this column: re-open with moveTo after a lifted pen, otherwise
+      // join from the previous column with lineTo (the horizontal link).
+      if (!penDown) {
+        ctx.moveTo(cx, colMinY);
+        penDown = true;
+      } else {
+        ctx.lineTo(cx, colMinY);
+      }
+      // Sweep the column's vertical envelope; the pen ends at colMaxY so the
+      // next column joins from there.
       ctx.lineTo(cx, colMaxY);
-      ctx.lineTo(cx, colLastY);
     };
 
     // Close out the column currently being accumulated (`col`), called right
     // before moving to a different column and once more after the loop for
-    // the final column. An empty column (all-NaN under 'break'/'connect')
-    // lifts the pen for 'break' only; 'connect' silently bridges over it.
+    // the final column. An empty column (all-NaN) emits no envelope stroke;
+    // under 'break' it also lifts the pen so the ribbon does not cross the gap.
     const closeColumn = () => {
-      if (!colHasData) {
-        if (gapMode === 'break') segOpen = false;
-        return;
-      }
-      if (segOpen) flush(col + 0.5);
-      // else: the moveTo for this column's first point already ran inline.
+      if (colHasData) flush(col + 0.5);
+      else if (gapMode === 'break') penDown = false;
     };
 
     for (let i = win.iStart; i <= win.iEnd; i++) {
@@ -103,16 +113,11 @@ export function renderLine(ctx: CanvasRenderingContext2D, view: SeriesView, plot
         const y = isGap ? 0 : rawY;
         const py = yOff - y * yScale;
         if (!colHasData) {
-          colFirstY = colMinY = colMaxY = colLastY = py;
+          colMinY = colMaxY = py;
           colHasData = true;
-          if (!segOpen) {
-            ctx.moveTo(col + 0.5, py);
-            segOpen = true;
-          }
         } else {
           if (py < colMinY) colMinY = py;
           if (py > colMaxY) colMaxY = py;
-          colLastY = py;
         }
       }
 
@@ -152,6 +157,5 @@ export function renderLine(ctx: CanvasRenderingContext2D, view: SeriesView, plot
       } else p++;
     }
   }
-
   ctx.stroke();
 }

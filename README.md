@@ -110,7 +110,7 @@ When `series` is omitted from `ChartOpts` a single default series is created aut
 new LineChart(canvas, opts?: ChartOpts)
 ```
 
-Each series is drawn as a single batched polyline. When the dataset is dense (more than 2× the plot width in samples) the renderer auto-switches to per-pixel-column min/max decimation — the visual envelope of the signal — so 500k points render as ~2×width segments with no aliasing. Multiple series are drawn in config order, each with its own colour.
+Each series is drawn as a single batched polyline. When the dataset is dense (more than 2× the plot width in samples) the renderer auto-switches to per-pixel-column min/max decimation — the visual envelope of the signal — so 500k points render as ~width vertical segments with no aliasing. Multiple series are drawn in config order, each with its own colour.
 
 ### `AreaChart`
 
@@ -405,7 +405,7 @@ The grid itself is a dashed internal lattice plus a closed rectangular frame dra
 
 By default the X axis treats values as plain numbers (`xAxis.type: 'linear'`, the default). Set `type: 'time'` to treat X values as epoch milliseconds — ticks then snap to calendar-sensible steps (second → minute → hour → day/week → month/quarter → year) instead of arbitrary linear divisions, and labels default to a granularity-matched date/time format.
 
-> `'band'` is also a valid `ScaleType` value (reserved for the v1.9.0 bar chart). It is recognised by the public type now so consumers can reference it without a breaking change later, but using it at runtime throws until the implementation lands.
+> `'band'` is also a valid `ScaleType` value (reserved for the future bar chart). It is recognised by the public type now so consumers can reference it without a breaking change later, but using it at runtime throws until the implementation lands.
 
 ```ts
 const chart = new LineChart(canvas, {

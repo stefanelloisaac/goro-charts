@@ -147,8 +147,11 @@ export class SeriesStore implements SeriesView {
   /** Resize the streaming window, keeping the most recent samples. */
   setMaxPoints(maxPoints: number): void {
     if (maxPoints < 1) throw new Error('maxPoints must be >= 1');
-    if (!this.ring) this.ring = new RingBuffer(maxPoints);
-    else this.ring.resize(maxPoints);
+    if (!this.ring) {
+      this.ring = new RingBuffer(maxPoints);
+    } else {
+      this.ring.resize(maxPoints);
+    }
     this.bindRing();
     this.syncFromRing();
   }

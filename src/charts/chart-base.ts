@@ -524,8 +524,9 @@ export abstract class ChartBase {
     ownership?: DataOwnership,
   ): void {
     if (this.destroyed) return;
+    const idx = this.resolveRef(ref);
     try {
-      this.storeAt(ref).setData(x, y, ownership);
+      this.stores[idx].setData(x, y, ownership);
     } catch (e) {
       throw new Error(`series ${this.refLabel(ref)}: ${(e as Error).message}`, { cause: e });
     }
