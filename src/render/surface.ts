@@ -1,15 +1,25 @@
 /**
- * @file Canvas surface: DPR handling, sizing, and the offscreen blit buffer.
+ * @file Canvas surface: DPR-aware sizing, two-layer offscreen compositing.
  *
- * Owns the visible canvas plus an offscreen canvas that holds the static
- * content (grid, axes, and the series). Both contexts carry a devicePixelRatio transform
- * so all drawing happens in CSS-pixel coordinates. The static layer is painted
- * once to the offscreen buffer; `blit` copies it to the visible canvas 1:1 in
- * device pixels, leaving the crosshair to be overlaid on top — so cursor
- * movement never repaints the series.
+ * Owns the visible canvas plus TWO offscreen canvases:
+ *
+ * 1. **Frame layer** (`frameCanvas`/`frameCtx`) — background, grid, axes,
+ *    labels, legend. Redrawn only when the domain or visual options change.
+ * 2. **Series layer** (`seriesCanvas`/`seriesCtx`) — clipped series paths
+ *    (lines, areas, scatter, stacked bands). Redrawn on every data mutation.
+ *
+ * The series layer is **conditional**: it is only allocated when the chart
+ * enters ring/streaming mode (`maxPoints > 0`). Static charts keep the
+ * single-offscreen path (frame layer only).
+ *
+ * `blit()` composes: clear visible → `drawImage(frameCanvas)` →
+ * `drawImage(seriesCanvas)` → (optional crosshair overlay done by caller).
+ *
+ * All contexts carry a `devicePixelRatio` transform so drawing code works in
+ * CSS-pixel coordinates throughout.
  */
 
-/** Manages the visible canvas, its DPR transform, and the offscreen buffer. */
+/** Manages the visible canvas, its DPR transform, and the offscreen buffers. */
 export class Surface {
   readonly canvas: HTMLCanvasElement;
   readonly ctx: CanvasRenderingContext2D;
@@ -18,8 +28,22 @@ export class Surface {
   cssW = 0;
   cssH = 0;
 
-  private offCanvas: HTMLCanvasElement | null = null;
-  private offCtx: CanvasRenderingContext2D | null = null;
+  /** The frame layer (grid, axes, labels, legend). Always present after first paint. */
+  private frameCanvas: HTMLCanvasElement | null = null;
+  private frameCtx: CanvasRenderingContext2D | null = null;
+
+  /** The series layer (lines, areas, scatter, stacked bands). Conditional — see {@link seriesLayerEnabled}. */
+  private seriesCanvas: HTMLCanvasElement | null = null;
+  private seriesCtx: CanvasRenderingContext2D | null = null;
+
+  /** True once the series layer has been allocated (ring/streaming mode). */
+  private _seriesLayerEnabled = false;
+
+  /** Whether the series offscreen has been allocated. */
+  get seriesLayerEnabled(): boolean {
+    return this._seriesLayerEnabled;
+  }
+
   /**
    * Cached canvas position (left/top in viewport CSS pixels). Interaction
    * handlers call {@link clientRect} on every pointer/wheel event; without
@@ -44,7 +68,22 @@ export class Surface {
   }
 
   /**
-   * Re-measure the canvas against its CSS box and resize the backing store.
+   * Allocate the series offscreen layer. Call once when the chart enters
+   * ring/streaming mode (maxPoints > 0 at construction or on first
+   * setMaxPoints(n>0)). Idempotent.
+   *
+   * The series layer is **never** deallocated once active (the cost of
+   * reallocation on intermittent streaming outweighs the memory saved).
+   */
+  enableSeriesLayer(): void {
+    if (this._seriesLayerEnabled) return;
+    this._seriesLayerEnabled = true;
+    // Lazily allocated on first seriesContext() call (current dimensions
+    // already known).
+  }
+
+  /**
+   * Re-measure the canvas against its CSS box and resize backing stores.
    * @returns true if the size actually changed (caller should redraw)
    */
   measure(): boolean {
@@ -65,10 +104,13 @@ export class Surface {
     this.canvas.width = bw;
     this.canvas.height = bh;
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    this.offCanvas = null;
-    this.offCtx = null;
-    // A resize almost always coincides with the canvas moving in the page,
-    // so drop the cached position too.
+
+    // Drop both offscreen buffers — they will be recreated on next access
+    // with the correct dimensions.
+    this.frameCanvas = null;
+    this.frameCtx = null;
+    this.seriesCanvas = null;
+    this.seriesCtx = null;
     this.cachedRect = null;
     return true;
   }
@@ -91,12 +133,65 @@ export class Surface {
     this.cachedRect = null;
   }
 
-  /** Get the offscreen context (lazily created), ready in CSS-pixel coords. */
+  /**
+   * Get the FRAME offscreen context (lazily created), ready in CSS-pixel
+   * coords. This is the "frame layer" — background, grid, axes, labels,
+   * legend. Always present after first access.
+   *
+   * NOTE: this replaces the pre-v1.9.0 `offscreenCtx()` which served both
+   * frame + series in a single buffer. The old method name is kept as an
+   * alias for migration (see {@link frameContext}).
+   */
+  frameContext(): CanvasRenderingContext2D {
+    return this.ensureLayer('frame');
+  }
+
+  /**
+   * Get the SERIES offscreen context (lazily created), or `null` if the
+   * series layer has not been enabled (static chart mode). Callers must
+   * handle the `null` case gracefully.
+   */
+  seriesContext(): CanvasRenderingContext2D | null {
+    if (!this._seriesLayerEnabled) return null;
+    return this.ensureLayer('series');
+  }
+
+  /**
+   * @deprecated Use {@link frameContext} or {@link seriesContext}.
+   *   Pre-v1.9.0 alias for the single offscreen context — now returns the
+   *   frame layer for backward compatibility during migration.
+   */
   offscreenCtx(): CanvasRenderingContext2D {
+    return this.frameContext();
+  }
+
+  /**
+   * Lazily allocate (or re-use) one of the two offscreen canvases.
+   * Both contexts carry the DPR transform so all drawing happens in
+   * CSS-pixel coordinates.
+   */
+  private ensureLayer(which: 'frame' | 'series'): CanvasRenderingContext2D {
     const bw = this.canvas.width;
     const bh = this.canvas.height;
-    if (this.offCanvas && this.offCanvas.width === bw && this.offCanvas.height === bh) {
-      return this.offCtx!;
+
+    if (which === 'frame') {
+      if (this.frameCanvas && this.frameCanvas.width === bw && this.frameCanvas.height === bh) {
+        return this.frameCtx!;
+      }
+      const off = document.createElement('canvas');
+      off.width = bw;
+      off.height = bh;
+      const ctx = off.getContext('2d');
+      if (!ctx) throw new Error('Offscreen 2D context not available');
+      ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      this.frameCanvas = off;
+      this.frameCtx = ctx;
+      return ctx;
+    }
+
+    // Series layer
+    if (this.seriesCanvas && this.seriesCanvas.width === bw && this.seriesCanvas.height === bh) {
+      return this.seriesCtx!;
     }
     const off = document.createElement('canvas');
     off.width = bw;
@@ -104,23 +199,35 @@ export class Surface {
     const ctx = off.getContext('2d');
     if (!ctx) throw new Error('Offscreen 2D context not available');
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    this.offCanvas = off;
-    this.offCtx = ctx;
+    this.seriesCanvas = off;
+    this.seriesCtx = ctx;
     return ctx;
   }
 
-  /** Copy the offscreen buffer onto the visible canvas, 1:1 in device pixels. */
+  /**
+   * Copy the offscreen buffers onto the visible canvas, in device-pixel
+   * order: frame layer first, then series layer on top. The caller
+   * (ChartBase) is responsible for overlaying the crosshair after this.
+   *
+   * When the series layer is disabled (static chart), this is equivalent to
+   * the pre-v1.9.0 single-buffer blit.
+   */
   blit(): void {
-    if (!this.offCanvas) return;
+    if (!this.frameCanvas) return;
     this.ctx.setTransform(1, 0, 0, 1, 0, 0);
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    this.ctx.drawImage(this.offCanvas, 0, 0);
+    this.ctx.drawImage(this.frameCanvas, 0, 0);
+    if (this._seriesLayerEnabled && this.seriesCanvas) {
+      this.ctx.drawImage(this.seriesCanvas, 0, 0);
+    }
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
   }
 
-  /** Release the offscreen buffer references. */
+  /** Release offscreen buffer references for both layers. */
   dispose(): void {
-    this.offCanvas = null;
-    this.offCtx = null;
+    this.frameCanvas = null;
+    this.frameCtx = null;
+    this.seriesCanvas = null;
+    this.seriesCtx = null;
   }
 }

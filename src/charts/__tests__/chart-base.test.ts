@@ -407,11 +407,13 @@ describe('prefers-reduced-motion', () => {
     mockMatchMedia(true, []);
     const chart = new LineChart(canvas, { autoDraw: true } as any);
 
-    // Fake that the chart is already dirty — invalidate should still schedule
-    chart['dirtyLayout'] = false;
+    // Fake that the chart is clean — invalidate should still schedule
+    chart['dirtyDomain'] = false;
+    chart['dirtyFrame'] = false;
+    chart['dirtySeries'] = false;
     const drawSpy = vi.spyOn(chart as any, 'draw').mockImplementation(() => {});
     chart['invalidate']();
-    expect(chart['dirtyLayout']).toBe(true);
+    expect(chart['dirtyDomain']).toBe(true);
 
     drawSpy.mockRestore();
   });
@@ -607,9 +609,13 @@ describe('Stacking (contrato e validação)', () => {
 
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     chart.draw();
-    chart['dirtyLayout'] = true;
+    chart['dirtyDomain'] = true;
+    chart['dirtyFrame'] = true;
+    chart['dirtySeries'] = true;
     chart.draw();
-    chart['dirtyLayout'] = true;
+    chart['dirtyDomain'] = true;
+    chart['dirtyFrame'] = true;
+    chart['dirtySeries'] = true;
     chart.draw();
     // Apesar de 3 draws, o aviso de desalinhamento aparece uma única vez.
     const skipCalls = warn.mock.calls.filter((c) => String(c[0]).includes('skipped series'));
@@ -1175,7 +1181,9 @@ describe('Add / remove / show / hide de séries', () => {
     chart['cursorX'] = plot.x + plot.w / 2;
     chart['cursorY'] = plot.y + plot.h / 2;
     chart['showCrosshair'] = true;
-    chart['dirtyLayout'] = true;
+    chart['dirtyDomain'] = true;
+    chart['dirtyFrame'] = true;
+    chart['dirtySeries'] = true;
     chart.draw();
 
     expect(captured.some((h) => h.label === 'B')).toBe(false);

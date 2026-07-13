@@ -6,11 +6,18 @@
  * the frame is an explicit `strokeRect` so it always closes into a box,
  * independent of tick placement. Tick labels sit outside the frame with no
  * extra axis strokes (the frame itself is the axis boundary).
+ *
+ * Both {@link renderGrid} and {@link renderAxes} accept an optional
+ * {@link TickCache} argument. When provided, they consume pre-computed ticks
+ * and labels — eliminating duplicate `generateTicks` calls (grid vs axes) and
+ * `formatTimeTick` / `formatNumber` calls on every frame (the streaming-ring
+ * sliding path reuses labels when the tick set is stable).
  */
 
 import type { Domain, PlotRect, ResolvedOpts } from '../types.ts';
 import { generateTicks, generateTimeTicks, type TimeTickUnit } from '../math/ticks.ts';
 import { formatNumber, formatTimeTick } from '../math/format.ts';
+import { TickCache } from '../math/tick-cache.ts';
 import { xToPx, yToPx } from '../math/scale.ts';
 
 /**
@@ -38,7 +45,13 @@ function formatYTick(y: number, opts: ResolvedOpts): string {
 }
 
 /** Draw the background grid (dashed internal lines + closed frame). */
-export function renderGrid(ctx: CanvasRenderingContext2D, d: Domain, plot: PlotRect, opts: ResolvedOpts): void {
+export function renderGrid(
+  ctx: CanvasRenderingContext2D,
+  d: Domain,
+  plot: PlotRect,
+  opts: ResolvedOpts,
+  cache?: TickCache,
+): void {
   ctx.setLineDash([6, 4]);
 
   const bottom = plot.y + plot.h;
@@ -49,7 +62,7 @@ export function renderGrid(ctx: CanvasRenderingContext2D, d: Domain, plot: PlotR
 
   // Dashed horizontal lines — skip if they land exactly on the top/bottom
   // boundary (the frame handles those edges).
-  const yTicks = generateTicks(d.yMin, d.yMax, opts.yTicks);
+  const yTicks = cache ? cache.yLeftTicks : generateTicks(d.yMin, d.yMax, opts.yTicks);
   ctx.beginPath();
   for (const y of yTicks) {
     const py = yToPx(y, d, plot);
@@ -60,7 +73,7 @@ export function renderGrid(ctx: CanvasRenderingContext2D, d: Domain, plot: PlotR
   ctx.stroke();
 
   // Dashed vertical lines — skip if they land on left/right boundary.
-  const { values: xTicks } = resolveXTicks(d, opts);
+  const xTicks = cache ? cache.xTicks : resolveXTicks(d, opts).values;
   ctx.beginPath();
   for (const x of xTicks) {
     const px = xToPx(x, d, plot, opts.xAxis.type);
@@ -86,25 +99,36 @@ export function renderAxes(
   plot: PlotRect,
   opts: ResolvedOpts,
   side: 'left' | 'right' = 'left',
+  cache?: TickCache,
 ): void {
   ctx.font = `${opts.fontSize}px ${opts.fontFamily}`;
   ctx.fillStyle = opts.textColor;
 
-  const yTicks = generateTicks(d.yMin, d.yMax, opts.yTicks);
+  const yTicks = cache
+    ? side === 'right'
+      ? cache.yRightTicks
+      : cache.yLeftTicks
+    : generateTicks(d.yMin, d.yMax, opts.yTicks);
+  const yLabels: readonly string[] = cache ? (side === 'right' ? cache.yRightLabels : cache.yLeftLabels) : [];
+
   ctx.textAlign = side === 'right' ? 'left' : 'right';
   ctx.textBaseline = 'middle';
   const ypx = side === 'right' ? plot.x + plot.w + 6 : plot.x - 6;
-  for (const y of yTicks) {
-    ctx.fillText(formatYTick(y, opts), ypx, yToPx(y, d, plot));
+  for (let i = 0; i < yTicks.length; i++) {
+    const label = cache ? yLabels[i] : formatYTick(yTicks[i], opts);
+    ctx.fillText(label, ypx, yToPx(yTicks[i], d, plot));
   }
 
   // X labels only on the left side (they share the same x domain)
   if (side === 'left') {
-    const { values: xTicks, unit } = resolveXTicks(d, opts);
+    const xTicks = cache ? cache.xTicks : resolveXTicks(d, opts).values;
+    const xUnit = cache ? cache.xUnit : resolveXTicks(d, opts).unit;
+    const xLabels: readonly string[] = cache ? cache.xLabels : [];
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    for (const x of xTicks) {
-      ctx.fillText(formatXTick(x, unit, opts), xToPx(x, d, plot, opts.xAxis.type), plot.y + plot.h + 6);
+    for (let i = 0; i < xTicks.length; i++) {
+      const label = cache ? xLabels[i] : formatXTick(xTicks[i], xUnit, opts);
+      ctx.fillText(label, xToPx(xTicks[i], d, plot, opts.xAxis.type), plot.y + plot.h + 6);
     }
   }
 }

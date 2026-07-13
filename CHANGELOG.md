@@ -5,6 +5,72 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] — 2026-07-13
+
+### Added
+
+- **Streaming-optimised draw pipeline.** The monolithic `renderStatic` is split
+  into four internal passes (`renderFrameLayer`, `renderSeriesLayer`,
+  `composeLayers`, `renderOverlay`) with granular dirty flags
+  (`dirtyDomain`/`dirtyFrame`/`dirtySeries`) so each data mutation redraws only
+  the parts that actually changed.
+- **Offscreen series layer (conditional).** Charts in ring/streaming mode
+  (`maxPoints > 0`) allocate a second offscreen canvas for series paths only.
+  The frame layer (grid, axes, labels, legend) is preserved between ticks —
+  appends redraw the series layer alone and composite on top. Static charts
+  keep the single-offscreen path and pay no extra memory.
+- **Tick/label cache (`TickCache`).** Tick values and formatted label strings
+  are cached by _tick VALUE SET_ (not `xMin`/`xMax`), so the streaming-ring
+  sliding window reuses pre-formatted labels when the visible grid marks stay
+  the same — no redundant `Intl.DateTimeFormat` or `formatNumber` per frame.
+  Grid and axes also share the same tick computation (eliminating a confirmed
+  duplicate `generateTicks`).
+- **Fast path for streaming.** When the tick set is stable (e.g. viewport fixed
+  or sliding window preserves grid marks), the frame layer is not redrawn at
+  all — only the series buffer clears, redraws, and composites. The fallback
+  "repositioning" fast path refreshes frame positions while reusing cached label
+  strings when tick values are unchanged but positions shifted.
+
+### Changed
+
+- `append`, `appendBatch`, `appendFrame` no longer mark the frame layer as
+  dirty by default — the pipeline assesses whether the tick set actually changed
+  after updating the domain, and only redraws the frame when necessary.
+- Crosshair under a stationary cursor during streaming recomputes its hit values
+  and live-region content even without a pointer-move event (data slides under
+  the cursor every tick).
+
+### Internal
+
+- `Surface` now maintains two offscreen canvases (`frameContext`/`seriesContext`)
+  with DPR applied to both. `offscreenCtx()` is kept as an alias of
+  `frameContext()` for the migration.
+- `TickCache` was added as an internal shared utility for grid/axis rendering,
+  with regression coverage for cache reuse and dual-Y ticks.
+
+### Fixed
+
+- **Crosshair sync dirty-overlay.** `injectCursor`, `injectCursorLeave`,
+  `onPointerLeave`, and `onKeyDown` now set `dirtyOverlay = true` before
+  `draw()`. Without this, `composeLayers` was skipped, leaving stale
+  crosshair pixels on the visible canvas — most visible on synced charts
+  where the non-hovered chart drew ghost lines.
+
+### Performance (node-canvas 3.2.3, 800×400, 500 samples)
+
+| Scenario                       | v1.8.0   | v1.9.0      | Delta    |
+| ------------------------------ | -------- | ----------- | -------- |
+| D1 (10k × 3 séries, ring)      | 21.3 ms  | 18.0 ms     | −15%     |
+| D1-slide (ring cheio, deslize) | 21.0 ms  | 16.7 ms     | −20%     |
+| D2 (100k × 3 séries, ring)     | 193 ms   | 163 ms      | −16%     |
+| B1 (20 charts × 2 séries)      | 123.6 ms | **34.0 ms** | **−72%** |
+| Fast path (viewport fixo)      | 2.4 ms   | **0.5 ms**  | **−79%** |
+
+D1/D1-slide don't hit the 16ms target — the streaming-ring sliding path
+still redraws the full decimated series each tick because the domain moves
+each frame. Append-only rendering is documented as GATE 1 (deferred) in
+`docs/phases/v1.9.0-baseline.md`.
+
 ## [1.8.0] — 2026-07-10
 
 ### Added

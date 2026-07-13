@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { createMockCtx } from './ctx-mock';
-import { renderGrid, renderAxes } from '../axes';
+import { createMockCtx } from './ctx-mock.ts';
+import { renderGrid, renderAxes } from '../axes.ts';
+import { TickCache } from '../../math/tick-cache.ts';
 
 const plot = { x: 50, y: 30, w: 400, h: 200 };
 const opts = {
@@ -50,6 +51,18 @@ describe('renderAxes', () => {
     // Apenas Y ticks (sem X ticks no lado direito)
     // textAlign deve ser 'left' para o lado direito
     expect(mc.state.textAlign).toBe('left');
+  });
+
+  it('usa ticks do eixo direito quando recebe TickCache', () => {
+    const mc = createMockCtx();
+    const left = { xMin: 0, xMax: 100, yMin: 0, yMax: 100 };
+    const right = { xMin: 0, xMax: 100, yMin: 1000, yMax: 2000 };
+    const cache = new TickCache();
+    cache.refresh(left, right, opts as any);
+
+    renderAxes(mc, right, plot, opts as any, 'right', cache);
+
+    expect(mc.calls.fillText.map(([label]) => label)).toEqual(cache.yRightLabels);
   });
 
   it('xAxis.type "time" formata os labels X como data/hora', () => {
