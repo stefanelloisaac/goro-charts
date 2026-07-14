@@ -2,14 +2,17 @@
 
 [![CI](https://github.com/stefanelloisaac/goro-charts/actions/workflows/ci.yml/badge.svg)](https://github.com/stefanelloisaac/goro-charts/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/goro-charts.svg)](https://www.npmjs.com/package/goro-charts)
-[![bundle size](https://img.shields.io/bundlephobia/minzip/goro-charts)](https://bundlephobia.com/package/goro-charts)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 **[Live demo →](https://stefanelloisaac.github.io/goro-charts/)**
 
-<!-- TODO: gravar e adicionar docs/assets/streaming.gif, depois descomentar:
-![Live streaming demo](docs/assets/streaming.gif)
--->
+<p align="center">
+  <img
+    src="./src/assets/gorocharts-avatar.png"
+    alt="GoroCharts mascot"
+    width="180"
+  />
+</p>
 
 Minimal high-performance chart engine. **Canvas 2D only. Zero runtime dependencies. Framework-agnostic.** Inspired by [uPlot](https://github.com/leeoniya/uPlot) — small, fast, and covers only what you need.
 
